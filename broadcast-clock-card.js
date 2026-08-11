@@ -12,9 +12,15 @@ class BroadcastClockCard extends HTMLElement {
     this._sizePercent = this._clampSize(this._config.size_percent);
     this._textScalePercent = this._clampTextScale(this._config.text_scale_percent);
     this._showBars = this._config.show_status_bars !== false;
+    this._showSpoken = this._config.show_spoken_time !== false;
+    this._ringColorMode = this._normalizeRingColorMode(this._config.ring_color_mode);
+    this._ringColor = this._config.ring_color || '#ff3b3b';
+    this._textColor = this._config.text_color || '#ff3b3b';
     if (!this._built) this._build();
+    this._applyColors();
     this._applyLayout();
     this._renderBars();
+    if (this._built) this._tick();
   }
 
   set hass(hass) {
@@ -48,6 +54,10 @@ class BroadcastClockCard extends HTMLElement {
       size_percent: 70,
       text_scale_percent: 16,
       show_status_bars: true,
+      show_spoken_time: true,
+      ring_color_mode: 'rainbow',
+      ring_color: '#ff3b3b',
+      text_color: '#ff3b3b',
       bars: DEFAULT_BARS
     };
   }
@@ -66,6 +76,15 @@ class BroadcastClockCard extends HTMLElement {
     const n = Number(v);
     if (!Number.isFinite(n)) return 16;
     return Math.min(40, Math.max(5, n));
+  }
+
+  _normalizeRingColorMode(v) {
+    return ['rainbow', 'solid', 'theme'].includes(v) ? v : 'rainbow';
+  }
+
+  _applyColors() {
+    if (!this._root) return;
+    this._root.style.setProperty('--bc-text-color', this._textColor);
   }
 
   _build() {
@@ -126,28 +145,29 @@ class BroadcastClockCard extends HTMLElement {
       .bc-hhmm {
         font-weight: 700;
         letter-spacing: 0.03em;
-        color: #ff3b3b;
-        text-shadow: 0 0 18px rgba(255, 59, 59, 0.65);
+        color: var(--bc-text-color, #ff3b3b);
+        text-shadow: 0 0 18px var(--bc-text-color, #ff3b3b);
         line-height: 1;
         font-variant-numeric: tabular-nums;
         white-space: nowrap;
       }
       .bc-ss {
         font-weight: 700;
-        color: #ff3b3b;
-        text-shadow: 0 0 14px rgba(255, 59, 59, 0.55);
+        color: var(--bc-text-color, #ff3b3b);
+        text-shadow: 0 0 14px var(--bc-text-color, #ff3b3b);
         line-height: 1.3;
         font-variant-numeric: tabular-nums;
       }
       .bc-date {
-        color: #7a2323;
+        color: var(--bc-text-color, #ff3b3b);
+        opacity: 0.55;
         letter-spacing: 0.08em;
         text-transform: uppercase;
         white-space: nowrap;
       }
       .bc-spoken {
         font-weight: 700;
-        color: #ff3b3b;
+        color: var(--bc-text-color, #ff3b3b);
         text-align: center;
         padding: 0 2vw;
         box-sizing: border-box;
@@ -205,6 +225,7 @@ class BroadcastClockCard extends HTMLElement {
 
     this._root = root;
     this._svg = root.querySelector('svg');
+    this._clockSide = root.querySelector('.bc-clock-side');
     this._ringWrap = root.querySelector('.bc-ring-wrap');
     this._hhmmEl = root.querySelector('#bc-hhmm');
     this._ssEl = root.querySelector('#bc-ss');
@@ -225,13 +246,16 @@ class BroadcastClockCard extends HTMLElement {
     if (!this._root) return;
     this._root.classList.toggle('bc-clock-only', !this._showBars);
     this._barsEl.style.display = this._showBars ? '' : 'none';
+    this._spokenEl.style.display = this._showSpoken ? '' : 'none';
     this._applySize();
   }
 
   _applySize() {
     if (!this._ringWrap) return;
-    const cardHeight = this.getBoundingClientRect().height || 400;
-    const ringPx = Math.max(80, cardHeight * (this._sizePercent / 100));
+    const rect = (this._clockSide || this).getBoundingClientRect();
+    const availableHeight = rect.height || this.getBoundingClientRect().height || 400;
+    const availableWidth = rect.width || availableHeight;
+    const ringPx = Math.max(80, Math.min(availableHeight, availableWidth) * (this._sizePercent / 100));
     this._ringWrap.style.width = `${ringPx}px`;
     this._ringWrap.style.height = `${ringPx}px`;
 
@@ -262,8 +286,16 @@ class BroadcastClockCard extends HTMLElement {
     }
   }
 
-  _hueForIndex(i) {
-    return (i / 59) * 120;
+  _dotColorForIndex(i) {
+    switch (this._ringColorMode) {
+      case 'solid':
+        return this._ringColor;
+      case 'theme':
+        return 'var(--primary-color, #03a9f4)';
+      case 'rainbow':
+      default:
+        return `hsl(${(i / 59) * 300}, 90%, 52%)`;
+    }
   }
 
   _startClock() {
@@ -294,15 +326,14 @@ class BroadcastClockCard extends HTMLElement {
     if (this._dots) {
       for (let i = 0; i < 60; i++) {
         const dot = this._dots[i];
-        const hue = this._hueForIndex(i);
+        const color = this._dotColorForIndex(i);
+        dot.setAttribute('fill', color);
         if (i <= s) {
-          dot.setAttribute('fill', `hsl(${hue}, 90%, 52%)`);
           dot.setAttribute('r', i === s ? '7.5' : '5');
           dot.setAttribute('opacity', '1');
         } else {
-          dot.setAttribute('fill', 'hsl(0, 60%, 22%)');
           dot.setAttribute('r', '3.5');
-          dot.setAttribute('opacity', '0.55');
+          dot.setAttribute('opacity', '0.28');
         }
       }
     }
@@ -379,6 +410,10 @@ class BroadcastClockCardEditor extends HTMLElement {
       size_percent: 70,
       text_scale_percent: 16,
       show_status_bars: true,
+      show_spoken_time: true,
+      ring_color_mode: 'rainbow',
+      ring_color: '#ff3b3b',
+      text_color: '#ff3b3b',
       bars: DEFAULT_BARS.map((b) => ({ ...b })),
       ...(config || {})
     };
@@ -407,7 +442,7 @@ class BroadcastClockCardEditor extends HTMLElement {
       style.textContent = `
         .bce-row { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
         .bce-row label { flex: 0 0 150px; font-size: 14px; opacity: 0.85; }
-        .bce-row input[type="text"], .bce-row input[type="number"] {
+        .bce-row input[type="text"], .bce-row input[type="number"], .bce-row select {
           flex: 1; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--divider-color, #444);
           background: var(--card-background-color, #1c1c1c); color: inherit;
         }
@@ -440,8 +475,29 @@ class BroadcastClockCardEditor extends HTMLElement {
         <input type="number" id="bce-textscale" min="5" max="40" value="${c.text_scale_percent}">
       </div>
       <div class="bce-row">
+        <label>Ring colour</label>
+        <select id="bce-ringmode">
+          <option value="rainbow" ${c.ring_color_mode === 'rainbow' ? 'selected' : ''}>Rainbow</option>
+          <option value="solid" ${c.ring_color_mode === 'solid' ? 'selected' : ''}>Solid colour</option>
+          <option value="theme" ${c.ring_color_mode === 'theme' ? 'selected' : ''}>Theme (primary colour)</option>
+        </select>
+      </div>
+      ${c.ring_color_mode === 'solid' ? `
+      <div class="bce-row">
+        <label>Ring colour</label>
+        <input type="color" id="bce-ringcolor" value="${c.ring_color}">
+      </div>` : ''}
+      <div class="bce-row">
+        <label>Text colour</label>
+        <input type="color" id="bce-textcolor" value="${c.text_color}">
+      </div>
+      <div class="bce-row">
         <label>Show status bars</label>
         <input type="checkbox" id="bce-showbars" ${c.show_status_bars ? 'checked' : ''}>
+      </div>
+      <div class="bce-row">
+        <label>Show spoken time line</label>
+        <input type="checkbox" id="bce-showspoken" ${c.show_spoken_time ? 'checked' : ''}>
       </div>
       <div class="bce-section-title">Status bars</div>
       <div id="bce-bars"></div>
@@ -456,8 +512,28 @@ class BroadcastClockCardEditor extends HTMLElement {
       this._config.text_scale_percent = Number(e.target.value) || 16;
       this._emitChange();
     });
+    this._wrap.querySelector('#bce-ringmode').addEventListener('change', (e) => {
+      this._config.ring_color_mode = e.target.value;
+      this._render();
+      this._emitChange();
+    });
+    const ringColorInput = this._wrap.querySelector('#bce-ringcolor');
+    if (ringColorInput) {
+      ringColorInput.addEventListener('change', (e) => {
+        this._config.ring_color = e.target.value;
+        this._emitChange();
+      });
+    }
+    this._wrap.querySelector('#bce-textcolor').addEventListener('change', (e) => {
+      this._config.text_color = e.target.value;
+      this._emitChange();
+    });
     this._wrap.querySelector('#bce-showbars').addEventListener('change', (e) => {
       this._config.show_status_bars = e.target.checked;
+      this._emitChange();
+    });
+    this._wrap.querySelector('#bce-showspoken').addEventListener('change', (e) => {
+      this._config.show_spoken_time = e.target.checked;
       this._emitChange();
     });
     this._wrap.querySelector('#bce-add-bar').addEventListener('click', () => {
