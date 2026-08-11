@@ -121,6 +121,11 @@ class BroadcastClockCard extends HTMLElement {
   _build() {
     this._built = true;
 
+    this.style.display = 'block';
+    this.style.width = '100%';
+    this.style.height = '100%';
+    this.style.overflow = 'hidden';
+
     const root = document.createElement('div');
     root.className = 'bc-root';
 
