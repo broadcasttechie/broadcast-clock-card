@@ -37,7 +37,7 @@ bars:
 |---|---|---|---|
 | `size_percent` | number | `70` | Clock ring size as a percentage of the available card height/width, whichever is smaller (10-100) |
 | `text_scale_percent` | number | `16` | Digital time text size as a percentage of the clock ring diameter (5-40) |
-| `ring_color_mode` | string | `rainbow` | Second-ring colour: `rainbow`, `solid` (uses `ring_color`), or `theme` (uses the dashboard's `--primary-color`) |
+| `ring_color_mode` | string | `rainbow` | Second-ring colour: `rainbow`, `sunset`, `ocean`, `neon` (multi-colour palettes), `solid` (uses `ring_color`), or `match_text` (follows `text_color`) |
 | `ring_color` | string | `#ff3b3b` | Ring colour used when `ring_color_mode: solid` |
 | `text_color` | string | `#ff3b3b` | Colour of the digital time, seconds, date, and spoken-time text |
 | `show_status_bars` | boolean | `true` | Show/hide the status bar row |

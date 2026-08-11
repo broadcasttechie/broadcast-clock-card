@@ -5,6 +5,37 @@ const DEFAULT_BARS = [
   { label: 'STATUS 4', color: '#ffcf3b', demo_active: false, entity: '' }
 ];
 
+const RING_PALETTES = {
+  rainbow: ['#ff3b3b', '#ffcf3b', '#3bff6a', '#3bd6ff', '#8a3bff', '#ff3b3b'],
+  sunset: ['#ff3ba1', '#ff3b3b', '#ff8a3b', '#ffd93b'],
+  ocean: ['#3b3bff', '#3b8aff', '#3bd6ff', '#3bffcc'],
+  neon: ['#ff3bd6', '#3bfff2', '#faff3b', '#ff3bd6']
+};
+
+function hexToRgb(hex) {
+  const h = (hex || '#ff3b3b').replace('#', '');
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  const n = parseInt(full, 16) || 0;
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
+function rgbToHex(r, g, b) {
+  return '#' + [r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+}
+
+function lerpColor(hexA, hexB, t) {
+  const a = hexToRgb(hexA), b = hexToRgb(hexB);
+  return rgbToHex(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t);
+}
+
+function paletteColor(stops, t) {
+  const clamped = Math.min(0.999999, Math.max(0, t));
+  const segments = stops.length - 1;
+  const scaled = clamped * segments;
+  const idx = Math.floor(scaled);
+  return lerpColor(stops[idx], stops[idx + 1], scaled - idx);
+}
+
 class BroadcastClockCard extends HTMLElement {
   setConfig(config) {
     this._config = config || {};
@@ -79,7 +110,7 @@ class BroadcastClockCard extends HTMLElement {
   }
 
   _normalizeRingColorMode(v) {
-    return ['rainbow', 'solid', 'theme'].includes(v) ? v : 'rainbow';
+    return (v === 'solid' || v === 'match_text' || RING_PALETTES[v]) ? v : 'rainbow';
   }
 
   _applyColors() {
@@ -290,11 +321,10 @@ class BroadcastClockCard extends HTMLElement {
     switch (this._ringColorMode) {
       case 'solid':
         return this._ringColor;
-      case 'theme':
-        return 'var(--primary-color, #03a9f4)';
-      case 'rainbow':
+      case 'match_text':
+        return this._textColor;
       default:
-        return `hsl(${(i / 59) * 300}, 90%, 52%)`;
+        return paletteColor(RING_PALETTES[this._ringColorMode] || RING_PALETTES.rainbow, i / 59);
     }
   }
 
@@ -478,8 +508,11 @@ class BroadcastClockCardEditor extends HTMLElement {
         <label>Ring colour</label>
         <select id="bce-ringmode">
           <option value="rainbow" ${c.ring_color_mode === 'rainbow' ? 'selected' : ''}>Rainbow</option>
+          <option value="sunset" ${c.ring_color_mode === 'sunset' ? 'selected' : ''}>Sunset</option>
+          <option value="ocean" ${c.ring_color_mode === 'ocean' ? 'selected' : ''}>Ocean</option>
+          <option value="neon" ${c.ring_color_mode === 'neon' ? 'selected' : ''}>Neon</option>
           <option value="solid" ${c.ring_color_mode === 'solid' ? 'selected' : ''}>Solid colour</option>
-          <option value="theme" ${c.ring_color_mode === 'theme' ? 'selected' : ''}>Theme (primary colour)</option>
+          <option value="match_text" ${c.ring_color_mode === 'match_text' ? 'selected' : ''}>Match text colour</option>
         </select>
       </div>
       ${c.ring_color_mode === 'solid' ? `
