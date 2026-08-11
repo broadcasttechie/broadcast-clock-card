@@ -10,6 +10,7 @@ class BroadcastClockCard extends HTMLElement {
     this._config = config || {};
     this._bars = (this._config.bars && this._config.bars.length ? this._config.bars : DEFAULT_BARS);
     this._sizePercent = this._clampSize(this._config.size_percent);
+    this._textScalePercent = this._clampTextScale(this._config.text_scale_percent);
     this._showBars = this._config.show_status_bars !== false;
     if (!this._built) this._build();
     this._applyLayout();
@@ -45,6 +46,7 @@ class BroadcastClockCard extends HTMLElement {
   static getStubConfig() {
     return {
       size_percent: 70,
+      text_scale_percent: 16,
       show_status_bars: true,
       bars: DEFAULT_BARS
     };
@@ -58,6 +60,12 @@ class BroadcastClockCard extends HTMLElement {
     const n = Number(v);
     if (!Number.isFinite(n)) return 70;
     return Math.min(100, Math.max(10, n));
+  }
+
+  _clampTextScale(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return 16;
+    return Math.min(40, Math.max(5, n));
   }
 
   _build() {
@@ -226,11 +234,14 @@ class BroadcastClockCard extends HTMLElement {
     const ringPx = Math.max(80, cardHeight * (this._sizePercent / 100));
     this._ringWrap.style.width = `${ringPx}px`;
     this._ringWrap.style.height = `${ringPx}px`;
-    this._hhmmEl.style.fontSize = `${ringPx * 0.16}px`;
-    this._ssEl.style.fontSize = `${ringPx * 0.08}px`;
-    this._dateEl.style.fontSize = `${Math.max(9, ringPx * 0.032)}px`;
+
+    const textScale = this._textScalePercent / 100;
+    const hhmmPx = ringPx * textScale;
+    this._hhmmEl.style.fontSize = `${hhmmPx}px`;
+    this._ssEl.style.fontSize = `${hhmmPx * 0.5}px`;
+    this._dateEl.style.fontSize = `${Math.max(9, hhmmPx * 0.2)}px`;
     this._dateEl.style.marginTop = `${ringPx * 0.02}px`;
-    this._spokenEl.style.fontSize = `${Math.max(11, ringPx * 0.05)}px`;
+    this._spokenEl.style.fontSize = `${Math.max(11, hhmmPx * 0.3125)}px`;
     this._spokenEl.style.marginTop = `${ringPx * 0.08}px`;
   }
 
@@ -366,6 +377,7 @@ class BroadcastClockCardEditor extends HTMLElement {
   setConfig(config) {
     this._config = {
       size_percent: 70,
+      text_scale_percent: 16,
       show_status_bars: true,
       bars: DEFAULT_BARS.map((b) => ({ ...b })),
       ...(config || {})
@@ -424,6 +436,10 @@ class BroadcastClockCardEditor extends HTMLElement {
         <input type="number" id="bce-size" min="10" max="100" value="${c.size_percent}">
       </div>
       <div class="bce-row">
+        <label>Text size (% of clock ring)</label>
+        <input type="number" id="bce-textscale" min="5" max="40" value="${c.text_scale_percent}">
+      </div>
+      <div class="bce-row">
         <label>Show status bars</label>
         <input type="checkbox" id="bce-showbars" ${c.show_status_bars ? 'checked' : ''}>
       </div>
@@ -434,6 +450,10 @@ class BroadcastClockCardEditor extends HTMLElement {
 
     this._wrap.querySelector('#bce-size').addEventListener('change', (e) => {
       this._config.size_percent = Number(e.target.value) || 70;
+      this._emitChange();
+    });
+    this._wrap.querySelector('#bce-textscale').addEventListener('change', (e) => {
+      this._config.text_scale_percent = Number(e.target.value) || 16;
       this._emitChange();
     });
     this._wrap.querySelector('#bce-showbars').addEventListener('change', (e) => {
