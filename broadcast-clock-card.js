@@ -1425,6 +1425,11 @@ class BroadcastClockCardEditor extends HTMLElement {
     const isText = c.clock_type === 'text';
     const isMasterClock = c.clock_type === 'master_clock';
     const hasTextStyle = isLedRing || isText;
+    // The panel that's hidden by the current layout has nothing to
+    // configure -- no point showing clock options when only bars are
+    // visible, or bar options when only the clock is visible.
+    const showClockSettings = c.layout !== 'bars_only';
+    const showBarSettings = c.layout !== 'clock_only';
 
     this._wrap.innerHTML = `
       <div class="bce-section-title">Panel layout</div>
@@ -1439,6 +1444,7 @@ class BroadcastClockCardEditor extends HTMLElement {
         </select>
       </div>
 
+      ${showClockSettings ? `
       <div class="bce-section-title">Clock</div>
       <div class="bce-row">
         <label>Clock type</label>
@@ -1575,6 +1581,9 @@ class BroadcastClockCardEditor extends HTMLElement {
         <label>Show spoken time line</label>
         <input type="checkbox" id="bce-showspoken" ${c.show_spoken_time ? 'checked' : ''}>
       </div>
+      ` : ''}
+
+      ${showBarSettings ? `
       <div class="bce-section-title">Status bars</div>
       <div class="bce-row">
         <label>Bar off colour</label>
@@ -1591,37 +1600,57 @@ class BroadcastClockCardEditor extends HTMLElement {
       ` : ''}
       <div id="bce-bars"></div>
       <button class="bce-add-btn" id="bce-add-bar" type="button">+ Add status bar</button>
+      ` : ''}
     `;
 
     this._wrap.querySelector('#bce-layout').addEventListener('change', (e) => {
       this._config.layout = e.target.value;
-      this._emitChange();
-    });
-    this._wrap.querySelector('#bce-clocktype').addEventListener('change', (e) => {
-      this._config.clock_type = e.target.value;
       this._render();
       this._emitChange();
     });
-    this._wrap.querySelector('#bce-size').addEventListener('change', (e) => {
-      this._config.size_percent = Number(e.target.value) || 70;
-      this._emitChange();
-    });
-    this._wrap.querySelector('#bce-textscale').addEventListener('change', (e) => {
-      this._config.text_scale_percent = Number(e.target.value) || 16;
-      this._emitChange();
-    });
-    this._wrap.querySelector('#bce-glow').addEventListener('change', (e) => {
-      this._config.text_glow_percent = Number(e.target.value);
-      this._emitChange();
-    });
-    this._wrap.querySelector('#bce-showcase').addEventListener('change', (e) => {
-      this._config.show_case = e.target.checked;
-      this._emitChange();
-    });
-    this._wrap.querySelector('#bce-textcolor').addEventListener('change', (e) => {
-      this._config.text_color = e.target.value;
-      this._emitChange();
-    });
+    const clockTypeSelect = this._wrap.querySelector('#bce-clocktype');
+    if (clockTypeSelect) {
+      clockTypeSelect.addEventListener('change', (e) => {
+        this._config.clock_type = e.target.value;
+        this._render();
+        this._emitChange();
+      });
+    }
+    const sizeInput = this._wrap.querySelector('#bce-size');
+    if (sizeInput) {
+      sizeInput.addEventListener('change', (e) => {
+        this._config.size_percent = Number(e.target.value) || 70;
+        this._emitChange();
+      });
+    }
+    const textScaleInput = this._wrap.querySelector('#bce-textscale');
+    if (textScaleInput) {
+      textScaleInput.addEventListener('change', (e) => {
+        this._config.text_scale_percent = Number(e.target.value) || 16;
+        this._emitChange();
+      });
+    }
+    const glowInput = this._wrap.querySelector('#bce-glow');
+    if (glowInput) {
+      glowInput.addEventListener('change', (e) => {
+        this._config.text_glow_percent = Number(e.target.value);
+        this._emitChange();
+      });
+    }
+    const showCaseInput = this._wrap.querySelector('#bce-showcase');
+    if (showCaseInput) {
+      showCaseInput.addEventListener('change', (e) => {
+        this._config.show_case = e.target.checked;
+        this._emitChange();
+      });
+    }
+    const textColorInput = this._wrap.querySelector('#bce-textcolor');
+    if (textColorInput) {
+      textColorInput.addEventListener('change', (e) => {
+        this._config.text_color = e.target.value;
+        this._emitChange();
+      });
+    }
     const secondBounceInput = this._wrap.querySelector('#bce-secbounce');
     if (secondBounceInput) {
       secondBounceInput.addEventListener('change', (e) => {
@@ -1694,11 +1723,14 @@ class BroadcastClockCardEditor extends HTMLElement {
         this._emitChange();
       });
     }
-    this._wrap.querySelector('#bce-showdate').addEventListener('change', (e) => {
-      this._config.show_date = e.target.checked;
-      this._render();
-      this._emitChange();
-    });
+    const showDateInput = this._wrap.querySelector('#bce-showdate');
+    if (showDateInput) {
+      showDateInput.addEventListener('change', (e) => {
+        this._config.show_date = e.target.checked;
+        this._render();
+        this._emitChange();
+      });
+    }
     const dateFormatSelect = this._wrap.querySelector('#bce-dateformat');
     if (dateFormatSelect) {
       dateFormatSelect.addEventListener('change', (e) => {
@@ -1714,21 +1746,29 @@ class BroadcastClockCardEditor extends HTMLElement {
       });
     }
     const timeSyncPicker = this._wrap.querySelector('#bce-timesync');
-    timeSyncPicker.hass = this._hass;
-    timeSyncPicker.value = c.time_sync_entity || '';
-    timeSyncPicker.addEventListener('value-changed', (e) => {
-      this._config.time_sync_entity = (e.detail.value || '').trim();
-      this._emitChange();
-    });
-    this._wrap.querySelector('#bce-showspoken').addEventListener('change', (e) => {
-      this._config.show_spoken_time = e.target.checked;
-      this._emitChange();
-    });
-    this._wrap.querySelector('#bce-baroffstyle').addEventListener('change', (e) => {
-      this._config.bar_off_style = e.target.value;
-      this._render();
-      this._emitChange();
-    });
+    if (timeSyncPicker) {
+      timeSyncPicker.hass = this._hass;
+      timeSyncPicker.value = c.time_sync_entity || '';
+      timeSyncPicker.addEventListener('value-changed', (e) => {
+        this._config.time_sync_entity = (e.detail.value || '').trim();
+        this._emitChange();
+      });
+    }
+    const showSpokenInput = this._wrap.querySelector('#bce-showspoken');
+    if (showSpokenInput) {
+      showSpokenInput.addEventListener('change', (e) => {
+        this._config.show_spoken_time = e.target.checked;
+        this._emitChange();
+      });
+    }
+    const barOffStyleSelect = this._wrap.querySelector('#bce-baroffstyle');
+    if (barOffStyleSelect) {
+      barOffStyleSelect.addEventListener('change', (e) => {
+        this._config.bar_off_style = e.target.value;
+        this._render();
+        this._emitChange();
+      });
+    }
     const barOffBrightnessInput = this._wrap.querySelector('#bce-baroffbrightness');
     if (barOffBrightnessInput) {
       barOffBrightnessInput.addEventListener('change', (e) => {
@@ -1736,14 +1776,17 @@ class BroadcastClockCardEditor extends HTMLElement {
         this._emitChange();
       });
     }
-    this._wrap.querySelector('#bce-add-bar').addEventListener('click', () => {
-      this._config.bars = [...this._config.bars, { label: 'NEW STATUS', color: '#ffffff', entity: '' }];
-      this._render();
-      this._emitChange();
-    });
+    const addBarBtn = this._wrap.querySelector('#bce-add-bar');
+    if (addBarBtn) {
+      addBarBtn.addEventListener('click', () => {
+        this._config.bars = [...this._config.bars, { label: 'NEW STATUS', color: '#ffffff', entity: '' }];
+        this._render();
+        this._emitChange();
+      });
+    }
 
     const barsEl = this._wrap.querySelector('#bce-bars');
-    c.bars.forEach((bar, idx) => {
+    if (barsEl) c.bars.forEach((bar, idx) => {
       const block = document.createElement('div');
       block.className = 'bce-bar-block';
       block.innerHTML = `
