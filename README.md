@@ -114,6 +114,7 @@ A 60-dot second ring wrapping a digital or segment-LED readout (the readout uses
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `text_font` | string | `normal` | `normal` (plain digits) or `segment` (true 7-segment LED digit rendering) |
+| `segment_style` | string | `flat` | `text_font: segment` only. `flat` (soft outline glow) or `glowing` (brighter, punchier multi-layer halo matching the LED Ring's `bulb` style) |
 | `show_seconds` | boolean | `true` | Show/hide the seconds |
 | `seconds_placement` | string | `newline` | `inline` (same line as HH:MM), `newline` (own line, smaller), or `newline_large` (own line, full size) |
 | `time_format` | string | `24h` | `24h` or `12h`. In `12h` + `segment` font, AM/PM shows as a 2-dot indicator (top lit = AM, bottom lit = PM) rather than text |

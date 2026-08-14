@@ -20,6 +20,7 @@ const CLOCK_TYPES = ['master_clock', 'led_ring', 'text'];
 const LED_STYLES = ['flat', 'glowing', 'bulb'];
 const LED_OFF_STYLES = ['dull', 'blank'];
 const TEXT_FONTS = ['segment', 'normal'];
+const SEGMENT_STYLES = ['flat', 'glowing'];
 const SECONDS_PLACEMENTS = ['inline', 'newline', 'newline_large'];
 const TIME_FORMATS = ['24h', '12h'];
 const DATE_FORMATS = ['long', 'long_year', 'short', 'numeric'];
@@ -197,6 +198,7 @@ class BroadcastClockCard extends HTMLElement {
     // back in as the minute progresses toward :59.
     this._ringCountdown = this._config.ring_countdown === true;
     this._textFont = this._normalizeEnum(this._config.text_font ?? legacy.text_font, TEXT_FONTS, 'normal');
+    this._segmentStyle = this._normalizeEnum(this._config.segment_style, SEGMENT_STYLES, 'flat');
     this._showSeconds = (this._config.show_seconds ?? legacy.show_seconds) !== false;
     this._secondsPlacement = this._normalizeEnum(this._config.seconds_placement ?? legacy.seconds_placement, SECONDS_PLACEMENTS, 'newline');
     this._timeFormat = this._normalizeEnum(this._config.time_format, TIME_FORMATS, '24h');
@@ -344,6 +346,7 @@ class BroadcastClockCard extends HTMLElement {
       emphasize_current_second: true,
       text_color: '#ff3b3b',
       text_font: 'normal',
+      segment_style: 'flat',
       show_seconds: true,
       seconds_placement: 'newline',
       time_format: '24h',
@@ -683,6 +686,17 @@ class BroadcastClockCard extends HTMLElement {
         fill: var(--bc-text-color, #ff3b3b);
         filter: drop-shadow(0 0 calc(6px * var(--bc-text-glow-scale, 1)) var(--bc-text-color, #ff3b3b));
       }
+      /* segment_style: "glowing" -- punchier multi-layer halo (same idea as
+         the LED ring's dot glow) plus a brightness boost on the segment
+         itself, for a look closer to a real physical LED tube rather than a
+         flat coloured shape with a soft outline. */
+      .bc-panel-clock[data-segment-style="glowing"] .bc-digitalled-digit .seg.on,
+      .bc-panel-clock[data-segment-style="glowing"] .bc-digitalled-colon .seg.on {
+        filter: brightness(1.3)
+          drop-shadow(0 0 calc(2px * var(--bc-text-glow-scale, 1)) var(--bc-text-color, #ff3b3b))
+          drop-shadow(0 0 calc(12px * var(--bc-text-glow-scale, 1)) var(--bc-text-color, #ff3b3b))
+          drop-shadow(0 0 calc(22px * var(--bc-text-glow-scale, 1)) var(--bc-text-color, #ff3b3b));
+      }
 
       /* Studio master-clock analog style */
       .bc-analog-housing {
@@ -810,6 +824,7 @@ class BroadcastClockCard extends HTMLElement {
     panel.className = 'bc-panel bc-panel-clock bc-clock-type-' + this._clockType;
     panel.dataset.ledStyle = this._ledStyle;
     panel.dataset.ledOffStyle = this._ledOffStyle;
+    panel.dataset.segmentStyle = this._segmentStyle;
     this._dots = null;
     this._prevLitCount = undefined; // new dot elements -- force a full repaint on the next tick
     this._digitalLedDigits = null;
@@ -1114,7 +1129,10 @@ class BroadcastClockCard extends HTMLElement {
       this._dateEl.classList.toggle('bc-date-font-mono', this._dateFont === 'mono');
     }
     if (this._analogWrap) this._analogWrap.classList.toggle('bc-analog-no-case', !this._showCase);
-    if (this._clockPanel) this._clockPanel.dataset.ledOffStyle = this._ledOffStyle;
+    if (this._clockPanel) {
+      this._clockPanel.dataset.ledOffStyle = this._ledOffStyle;
+      this._clockPanel.dataset.segmentStyle = this._segmentStyle;
+    }
     this._applySize();
   }
 
@@ -1643,6 +1661,7 @@ class BroadcastClockCardEditor extends HTMLElement {
       emphasize_current_second: true,
       text_color: '#ff3b3b',
       text_font: 'normal',
+      segment_style: 'flat',
       show_seconds: true,
       seconds_placement: 'newline',
       time_format: '24h',
@@ -1849,6 +1868,15 @@ class BroadcastClockCardEditor extends HTMLElement {
           <option value="normal" ${c.text_font !== 'segment' ? 'selected' : ''}>Normal text</option>
         </select>
       </div>
+      ${c.text_font === 'segment' ? `
+      <div class="bce-row">
+        <label>Segment style</label>
+        <select id="bce-segmentstyle">
+          <option value="flat" ${c.segment_style !== 'glowing' ? 'selected' : ''}>Flat (soft outline)</option>
+          <option value="glowing" ${c.segment_style === 'glowing' ? 'selected' : ''}>Glowing (bright tube, matches LED bulb)</option>
+        </select>
+      </div>
+      ` : ''}
       <div class="bce-row">
         <label>Show seconds</label>
         <input type="checkbox" id="bce-showseconds" ${c.show_seconds !== false ? 'checked' : ''}>
@@ -2042,6 +2070,14 @@ class BroadcastClockCardEditor extends HTMLElement {
     if (textFontSelect) {
       textFontSelect.addEventListener('change', (e) => {
         this._config.text_font = e.target.value;
+        this._render();
+        this._emitChange();
+      });
+    }
+    const segmentStyleSelect = this._wrap.querySelector('#bce-segmentstyle');
+    if (segmentStyleSelect) {
+      segmentStyleSelect.addEventListener('change', (e) => {
+        this._config.segment_style = e.target.value;
         this._emitChange();
       });
     }
