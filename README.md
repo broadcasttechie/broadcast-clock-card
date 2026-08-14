@@ -4,15 +4,15 @@ A broadcast-studio style on-air clock for Home Assistant Lovelace dashboards —
 
 ## Screenshots
 
-*(placeholders below — screenshots coming soon)*
+*(a few still pending — placeholders below will be filled in)*
 
 | Master Clock | LED Ring — glowing | LED Ring — bulb |
 |---|---|---|
-| ![Master Clock](screenshots/master-clock.png) | ![LED Ring, glowing style](screenshots/led-ring-glowing.png) | ![LED Ring, bulb style](screenshots/led-ring-bulb.png) |
+| ![Master Clock](screenshots/master-clock.webp) | ![LED Ring, glowing style](screenshots/led-ring-glowing.webp) | ![LED Ring, bulb style](screenshots/led-ring-bulb.png) |
 
 | LED Ring — flat | Text — segment font | Text — normal font |
 |---|---|---|
-| ![LED Ring, flat style](screenshots/led-ring-flat.png) | ![Text style, segment font](screenshots/text-segment.png) | ![Text style, normal font](screenshots/text-normal.png) |
+| ![LED Ring, flat style](screenshots/led-ring-flat.png) | ![Text style, segment font](screenshots/text-segment.webp) | ![Text style, normal font](screenshots/text-normal.png) |
 
 | Status bars — single-colour | Status bars — multi-state |
 |---|---|
