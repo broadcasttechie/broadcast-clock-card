@@ -709,11 +709,8 @@ class BroadcastClockCard extends HTMLElement {
         fill: url(#bc-analog-facegrad);
       }
       .bc-analog-innerglow {
-        fill: none;
-        stroke: #fff;
-        stroke-width: 30;
+        fill: url(#bc-analog-innerglow-grad);
         opacity: calc(0.85 * var(--bc-text-glow-scale, 1));
-        filter: blur(calc(9px * var(--bc-text-glow-scale, 1)));
       }
       .bc-analog-tick {
         stroke: #111;
@@ -1003,9 +1000,12 @@ class BroadcastClockCard extends HTMLElement {
         <stop offset="0%" stop-color="#e9e9e7"/>
         <stop offset="100%" stop-color="#b6b6b4"/>
       </radialGradient>
-      <clipPath id="bc-analog-faceclip">
-        <circle cx="${CLOCK_CX}" cy="${CLOCK_CY}" r="94"/>
-      </clipPath>
+      <radialGradient id="bc-analog-innerglow-grad" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="#fff" stop-opacity="0"/>
+        <stop offset="75%" stop-color="#fff" stop-opacity="0"/>
+        <stop offset="92%" stop-color="#fff" stop-opacity="0.6"/>
+        <stop offset="100%" stop-color="#fff" stop-opacity="1"/>
+      </radialGradient>
     `;
     svg.appendChild(defs);
 
@@ -1016,18 +1016,20 @@ class BroadcastClockCard extends HTMLElement {
     face.setAttribute('class', 'bc-analog-facebg');
     svg.appendChild(face);
 
-    // Edge-lit glow: a blurred ring straddling the face boundary, clipped to
-    // the face circle so it only ever brightens inward from the rim and never
-    // bleeds onto the black housing outside.
-    const glowGroup = document.createElementNS(NS, 'g');
-    glowGroup.setAttribute('clip-path', 'url(#bc-analog-faceclip)');
+    // Edge-lit glow: a radial-gradient fill that brightens toward the face's
+    // rim, replacing an earlier blurred-stroke-inside-a-clip-path version.
+    // filter:blur() combined with clip-path forces the browser to rasterize
+    // the blur to an offscreen buffer sized to the element's on-screen pixel
+    // size -- at small card sizes that buffer is low-resolution, which is
+    // what produced the blocky/lighter-box artifacts near the rim. A
+    // gradient fill is resolution-independent vector rendering, so it stays
+    // smooth at any size with no filter or clip-path involved.
     const glow = document.createElementNS(NS, 'circle');
     glow.setAttribute('cx', String(CLOCK_CX));
     glow.setAttribute('cy', String(CLOCK_CY));
     glow.setAttribute('r', '94');
     glow.setAttribute('class', 'bc-analog-innerglow');
-    glowGroup.appendChild(glow);
-    svg.appendChild(glowGroup);
+    svg.appendChild(glow);
 
     for (let i = 0; i < 60; i++) {
       const angle = i * 6;
