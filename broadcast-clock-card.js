@@ -108,6 +108,11 @@ const SEVEN_SEG_DIGITS = {
   '5': 'afgcd', '6': 'afgecd', '7': 'abc', '8': 'abcdefg', '9': 'abcdfg'
 };
 
+// Minimum gap between time_sync_entity offset corrections -- see
+// _updateTimeSync for why this needs to be much longer than 1 second even
+// when the sync entity itself updates every second.
+const TIME_SYNC_MIN_INTERVAL_MS = 60000;
+
 // ---- Analog clock-face geometry (used by the "master_clock" clock type) ----
 // Clock angles: 0deg = 12 o'clock (top), increasing clockwise.
 const CLOCK_CX = 100, CLOCK_CY = 100;
@@ -204,6 +209,7 @@ class BroadcastClockCard extends HTMLElement {
     if (!this._timeSyncEntity || !this._hass) {
       this._timeOffsetMs = 0;
       this._timeSyncLastUpdated = null;
+      this._timeSyncLastAppliedAt = null;
       return;
     }
     const st = this._hass.states[this._timeSyncEntity];
@@ -218,13 +224,27 @@ class BroadcastClockCard extends HTMLElement {
     // actually moved.
     if (st.last_updated === this._timeSyncLastUpdated) return;
     this._timeSyncLastUpdated = st.last_updated;
+
+    // Even fixing the above, a sync entity that itself updates every second
+    // (e.g. a live "seconds" sensor) means this still runs roughly once a
+    // second -- and any few-ms jitter in exactly when that update reaches
+    // the browser (network, HA's own scheduler) races this card's own
+    // independent 1-second tick timer (_scheduleNextTick), which is enough
+    // to visibly skip or repeat a second. A local clock doesn't drift enough
+    // in under a minute for that to matter, so only actually apply a fresh
+    // offset this infrequently -- correction stays accurate, but stops
+    // fighting the tick scheduler.
+    const now = Date.now();
+    if (this._timeSyncLastAppliedAt && (now - this._timeSyncLastAppliedAt) < TIME_SYNC_MIN_INTERVAL_MS) return;
+
     const serverTime = new Date(st.last_updated).getTime();
     if (Number.isNaN(serverTime)) return;
     // Offset between this entity's last-known-good server timestamp and the
     // browser's own clock at the moment we received it — applied to every
     // subsequent tick so the displayed time tracks the HA host's clock even
     // if the browser/tablet's own clock is wrong or drifting.
-    this._timeOffsetMs = serverTime - Date.now();
+    this._timeOffsetMs = serverTime - now;
+    this._timeSyncLastAppliedAt = now;
   }
 
   connectedCallback() {
