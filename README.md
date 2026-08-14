@@ -2,6 +2,22 @@
 
 A broadcast-studio style on-air clock for Home Assistant Lovelace dashboards — Master Clock (studio analog), LED Ring (60-dot second ring with a digital or segment-LED readout), or plain Text — with an optional row of configurable status bars (recording / on-air / live indicators, single-colour or multi-state).
 
+## Screenshots
+
+*(placeholders below — screenshots coming soon)*
+
+| Master Clock | LED Ring — glowing | LED Ring — bulb |
+|---|---|---|
+| ![Master Clock](screenshots/master-clock.png) | ![LED Ring, glowing style](screenshots/led-ring-glowing.png) | ![LED Ring, bulb style](screenshots/led-ring-bulb.png) |
+
+| LED Ring — flat | Text — segment font | Text — normal font |
+|---|---|---|
+| ![LED Ring, flat style](screenshots/led-ring-flat.png) | ![Text style, segment font](screenshots/text-segment.png) | ![Text style, normal font](screenshots/text-normal.png) |
+
+| Status bars — single-colour | Status bars — multi-state |
+|---|---|
+| ![Single-colour status bars](screenshots/status-bars-single.png) | ![Multi-state status bars](screenshots/status-bars-multi.png) |
+
 ## Installation
 
 ### HACS
