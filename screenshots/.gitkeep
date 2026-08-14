@@ -1,11 +1,11 @@
 Still needed (matching filenames referenced in README.md):
-  led-ring-glowing.png
-  led-ring-flat.png
-  status-bars-single.png
-  status-bars-multi.png
+  status-bars-single.png  (a single-colour bar in its lit/on state)
+  status-bars-multi.png   (a type: multi bar showing a mapped colour)
 
 Already added:
   master-clock.webp    (also shows the status bars, off state)
   led-ring-bulb.webp
+  led-ring-glowing.png
+  led-ring-flat.png
   text-normal.webp
   text-segment.png
