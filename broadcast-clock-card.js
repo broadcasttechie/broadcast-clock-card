@@ -699,13 +699,15 @@ class BroadcastClockCard extends HTMLElement {
       this._analogWrap = panel.querySelector('#bc-analog-wrap');
       this._buildAnalogClock();
     } else if (this._clockType === 'led_ring') {
+      // Case wraps the whole ring (dots + readout together), not just the
+      // inner readout -- matches a real studio clock's single boxed screen.
       panel.innerHTML = `
-        <div class="bc-ring-wrap" id="bc-ring-wrap">
+        ${caseOpen}<div class="bc-ring-wrap" id="bc-ring-wrap">
           <svg viewBox="0 0 300 300"></svg>
           <div class="bc-digital">
-            ${caseOpen}<div class="bc-textstyle-screen" id="bc-textstyle-screen"></div>${caseClose}
+            <div class="bc-textstyle-screen" id="bc-textstyle-screen"></div>
           </div>
-        </div>
+        </div>${caseClose}
         <div class="bc-date" id="bc-date">-</div>
         <div class="bc-spoken" id="bc-spoken">&nbsp;</div>
       `;
@@ -976,12 +978,17 @@ class BroadcastClockCard extends HTMLElement {
     if (this._clockType === 'master_clock') {
       this._applySizeAnalog(envelope);
     } else if (this._clockType === 'led_ring') {
-      this._ringWrap.style.width = `${envelope}px`;
-      this._ringWrap.style.height = `${envelope}px`;
+      // When the case is on, it now wraps the whole ring (not just the
+      // inner readout) -- shrink the ring itself so the ring + the case's
+      // own border/padding together still fit the original envelope,
+      // instead of the boxed clock overflowing it.
+      const ringSize = this._showCase ? envelope * 0.88 : envelope;
+      this._ringWrap.style.width = `${ringSize}px`;
+      this._ringWrap.style.height = `${ringSize}px`;
       // The readout must fit inside the ring's circle, not the full panel --
       // constrained to the ring's own diameter shrunk to a safe inscribed
       // fraction.
-      const inner = envelope * 0.62;
+      const inner = ringSize * 0.62;
       this._applySizeTextStyle(baseUnit, inner, inner);
     } else {
       this._applySizeTextStyle(baseUnit, w * 0.92, h * 0.7);
