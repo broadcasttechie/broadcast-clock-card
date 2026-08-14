@@ -207,6 +207,7 @@ class BroadcastClockCard extends HTMLElement {
     this._syncSmoothSecondHand();
 
     this._applyColors();
+    this._applyRingColors();
     this._applyLayout();
     this._renderBars();
     if (this._built) this._tick();
@@ -775,6 +776,7 @@ class BroadcastClockCard extends HTMLElement {
     panel.className = 'bc-panel bc-panel-clock bc-clock-type-' + this._clockType;
     panel.dataset.ledStyle = this._ledStyle;
     this._dots = null;
+    this._prevLitCount = undefined; // new dot elements -- force a full repaint on the next tick
     this._digitalLedDigits = null;
     this._ampmDots = null;
     this._analogHands = null;
@@ -1220,6 +1222,22 @@ class BroadcastClockCard extends HTMLElement {
       this._svg.appendChild(group);
       this._dots.push({ group, circle });
     }
+    this._applyRingColors();
+  }
+
+  // Each dot's colour is a pure function of its fixed index and the
+  // (rarely-changing) colour config -- never of the current second -- so
+  // it only needs setting once here (build time) and again whenever colour
+  // config actually changes (setConfig), not on every single per-second
+  // tick like it used to be.
+  _applyRingColors() {
+    if (!this._dots) return;
+    for (let i = 0; i < 60; i++) {
+      const color = this._dotColorForIndex(i);
+      const { circle } = this._dots[i];
+      circle.setAttribute('fill', color);
+      circle.style.color = color;
+    }
   }
 
   _dotColorForIndex(i) {
@@ -1322,6 +1340,17 @@ class BroadcastClockCard extends HTMLElement {
   // Shared by any clock type that includes the 60-dot second ring
   // ('led_ring' only, currently) -- led_off_style/emphasize_current_second
   // are per-instance config, everything else is the seconds-progress math.
+  //
+  // Only repaints the dots whose lit/emphasis state actually changed since
+  // the last tick, instead of all 60 unconditionally every second. On a
+  // normal tick exactly one second elapses, so exactly two dots ever change
+  // (the newly-lit one, and the previous "current" dot shrinking back to
+  // plain-lit) -- repainting the other 58 every second was pure waste, and
+  // expensive waste at that: each dot carries a drop-shadow filter under
+  // the glowing led_style, and 60 filtered-element repaints/second is
+  // enough to visibly bog down weaker hardware (reported as the clock
+  // skipping several seconds at a time). Colour is handled separately in
+  // _applyRingColors -- it's static per dot, never touched here at all.
   _tickDotsRing(s) {
     if (!this._dots) return;
     const offOpacity = this._ledOffStyle === 'blank' ? '0' : '0.28';
@@ -1334,11 +1363,9 @@ class BroadcastClockCard extends HTMLElement {
     // the end of the lit range.
     const litCount = s === 0 ? 60 : s;
     const emphasizedIndex = litCount - 1;
-    for (let i = 0; i < 60; i++) {
+
+    const paintDot = (i) => {
       const { group, circle } = this._dots[i];
-      const color = this._dotColorForIndex(i);
-      circle.setAttribute('fill', color);
-      circle.style.color = color;
       if (i < litCount) {
         const isCurrent = i === emphasizedIndex && this._emphasizeCurrentSecond;
         circle.setAttribute('r', isCurrent ? '7.5' : '5');
@@ -1347,7 +1374,25 @@ class BroadcastClockCard extends HTMLElement {
         circle.setAttribute('r', '3.5');
         group.setAttribute('opacity', offOpacity);
       }
+    };
+
+    const paintedForSameConfig = this._prevOffOpacity === offOpacity
+      && this._prevEmphasizeCurrentSecond === this._emphasizeCurrentSecond;
+    if (paintedForSameConfig && this._prevLitCount !== undefined && litCount === this._prevLitCount + 1) {
+      if (this._prevEmphasizedIndex !== undefined) paintDot(this._prevEmphasizedIndex);
+      paintDot(emphasizedIndex);
+    } else {
+      // First tick after a (re)build, a resync/missed-tick jump, the
+      // once-a-minute 60->1 wraparound, or led_off_style/
+      // emphasize_current_second having changed since the last tick --
+      // repaint everything to guarantee correctness.
+      for (let i = 0; i < 60; i++) paintDot(i);
     }
+
+    this._prevLitCount = litCount;
+    this._prevEmphasizedIndex = emphasizedIndex;
+    this._prevOffOpacity = offOpacity;
+    this._prevEmphasizeCurrentSecond = this._emphasizeCurrentSecond;
   }
 
   _tickAnalog(h24, m, s, dateStr) {
