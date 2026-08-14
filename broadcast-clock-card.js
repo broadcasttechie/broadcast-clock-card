@@ -132,6 +132,16 @@ const SECOND_HAND_BEZIER_X1 = 0.34;
 const SECOND_HAND_BEZIER_X2 = 0.64;
 const SECOND_HAND_BEZIER_Y2 = 1;
 
+// Master clock's second hand: 'tick' (discrete per-second steps, optionally
+// with the bounce overshoot below) or 'smooth' (continuous sweep, driven by
+// requestAnimationFrame -- see _syncSmoothSecondHand).
+const SECOND_HAND_STYLES = ['tick', 'smooth'];
+// Multiplies the base tick transition durations (0.4s bounce / 0.15s flat)
+// -- 'medium' is a scale of 1, i.e. exactly the original hardcoded values,
+// so existing configs default to unchanged behaviour.
+const TICK_TRAVEL_TIMES = ['short', 'medium', 'long'];
+const TICK_TRAVEL_TIME_SCALE = { short: 0.5, medium: 1, long: 1.75 };
+
 function bezierPeakY(y1, y2) {
   let peak = 0;
   for (let i = 0; i <= 200; i++) {
@@ -171,6 +181,8 @@ class BroadcastClockCard extends HTMLElement {
     this._ringColor = this._config.ring_color || '#ff3b3b';
     this._textColor = this._config.text_color || '#ff3b3b';
     this._secondHandBounceDeg = this._clampBounce(this._config.second_hand_bounce_deg);
+    this._secondHandStyle = this._normalizeEnum(this._config.second_hand_style, SECOND_HAND_STYLES, 'tick');
+    this._tickTravelTime = this._normalizeEnum(this._config.tick_travel_time, TICK_TRAVEL_TIMES, 'medium');
     this._barOffStyle = this._config.bar_off_style === 'tinted' ? 'tinted' : 'neutral';
     this._barOffBrightness = this._clampBarOffBrightness(this._config.bar_off_brightness);
 
@@ -192,6 +204,7 @@ class BroadcastClockCard extends HTMLElement {
     if (!this._built) this._build();
     if (this._builtStyleKey !== styleKey) this._buildClockPanel();
     this._applySecondHandBounce();
+    this._syncSmoothSecondHand();
 
     this._applyColors();
     this._applyLayout();
@@ -296,6 +309,8 @@ class BroadcastClockCard extends HTMLElement {
       seconds_placement: 'newline',
       time_format: '24h',
       second_hand_bounce_deg: 2,
+      second_hand_style: 'tick',
+      tick_travel_time: 'medium',
       bar_off_style: 'neutral',
       bar_off_brightness: 15,
       bars: DEFAULT_BARS
@@ -348,10 +363,45 @@ class BroadcastClockCard extends HTMLElement {
   _applySecondHandBounce() {
     const hand = this._analogHands && this._analogHands.secondHand;
     if (!hand) return; // clock type without an analog second hand
+    if (this._secondHandStyle === 'smooth') {
+      // The rAF loop (_syncSmoothSecondHand) sets transform every frame --
+      // any CSS transition here would lag behind and smear those updates.
+      hand.style.transition = 'none';
+      return;
+    }
+    const scale = TICK_TRAVEL_TIME_SCALE[this._tickTravelTime] ?? 1;
     const deg = this._secondHandBounceDeg;
     hand.style.transition = deg > 0
-      ? `transform 0.4s cubic-bezier(${SECOND_HAND_BEZIER_X1}, ${bezierY1ForOvershootDeg(deg).toFixed(3)}, ${SECOND_HAND_BEZIER_X2}, ${SECOND_HAND_BEZIER_Y2})`
-      : 'transform 0.15s ease-out';
+      ? `transform ${(0.4 * scale).toFixed(2)}s cubic-bezier(${SECOND_HAND_BEZIER_X1}, ${bezierY1ForOvershootDeg(deg).toFixed(3)}, ${SECOND_HAND_BEZIER_X2}, ${SECOND_HAND_BEZIER_Y2})`
+      : `transform ${(0.15 * scale).toFixed(2)}s ease-out`;
+  }
+
+  // Continuous requestAnimationFrame sweep for the 'smooth' second-hand
+  // style. Deliberately recomputes the absolute angle from the same
+  // corrected time source (_timeOffsetMs) fresh on every single frame,
+  // rather than animating/accumulating a delta -- so it can never drift on
+  // its own, and it inherits exactly the same accuracy (and the
+  // once-a-minute time_sync throttling) as the digital displays and the
+  // ticking hand. A CSS-only sweep animation would be smoother-looking but
+  // can't make that guarantee: its timing runs on the browser's animation
+  // clock, not Date.now(), and drifts from real time over long periods
+  // (especially after tab-visibility changes) with no way to re-correct it
+  // mid-animation.
+  _syncSmoothSecondHand() {
+    if (this._smoothSecondHandRaf) {
+      cancelAnimationFrame(this._smoothSecondHandRaf);
+      this._smoothSecondHandRaf = null;
+    }
+    if (!(this._clockType === 'master_clock' && this._secondHandStyle === 'smooth')) return;
+    const frame = () => {
+      const hand = this._analogHands && this._analogHands.secondHand;
+      if (!hand) { this._smoothSecondHandRaf = null; return; } // rebuilt away from smooth master_clock
+      const now = new Date(Date.now() + (this._timeOffsetMs || 0));
+      const fractionalSeconds = now.getSeconds() + now.getMilliseconds() / 1000;
+      hand.style.transform = `rotate(${(fractionalSeconds * SECOND_HAND_STEP_DEG).toFixed(3)}deg)`;
+      this._smoothSecondHandRaf = requestAnimationFrame(frame);
+    };
+    this._smoothSecondHandRaf = requestAnimationFrame(frame);
   }
 
   _normalizeLayout(layout, legacyShowStatusBars) {
@@ -1153,6 +1203,7 @@ class BroadcastClockCard extends HTMLElement {
   _startClock() {
     if (this._timer) clearTimeout(this._timer);
     this._scheduleNextTick();
+    this._syncSmoothSecondHand();
   }
 
   _scheduleNextTick() {
@@ -1265,12 +1316,14 @@ class BroadcastClockCard extends HTMLElement {
     hands.hourHand.setAttribute('transform', `rotate(${hourAngle.toFixed(2)} ${CLOCK_CX} ${CLOCK_CY})`);
     hands.minuteHand.setAttribute('transform', `rotate(${minuteAngle.toFixed(2)} ${CLOCK_CX} ${CLOCK_CY})`);
     // Second hand uses a CSS transform (not the SVG attribute) so the
-    // transition below can animate it — kept as an ever-increasing angle
-    // (never reset to 0) so it always steps forward by exactly 6deg and the
-    // overshoot/settle animation never has to spin the "wrong way" around
-    // the minute-boundary wraparound.
-    this._secondHandDeg = (this._secondHandDeg || 0) + 6;
-    hands.secondHand.style.transform = `rotate(${this._secondHandDeg}deg)`;
+    // transition can animate it. Only for 'tick' style -- 'smooth' hands
+    // over exclusive ownership of this element's transform to the
+    // requestAnimationFrame loop in _syncSmoothSecondHand, which would
+    // otherwise fight this once-a-second write.
+    if (this._secondHandStyle !== 'smooth') {
+      this._secondHandDeg = (this._secondHandDeg || 0) + 6;
+      hands.secondHand.style.transform = `rotate(${this._secondHandDeg}deg)`;
+    }
     if (this._dateEl) this._dateEl.textContent = dateStr;
   }
 
@@ -1380,6 +1433,8 @@ class BroadcastClockCardEditor extends HTMLElement {
       seconds_placement: 'newline',
       time_format: '24h',
       second_hand_bounce_deg: 2,
+      second_hand_style: 'tick',
+      tick_travel_time: 'medium',
       bar_off_style: 'neutral',
       bar_off_brightness: 15,
       bars: DEFAULT_BARS.map((b) => ({ ...b })),
@@ -1497,9 +1552,26 @@ class BroadcastClockCardEditor extends HTMLElement {
 
       ${isMasterClock ? `
       <div class="bce-row">
+        <label>Second hand style</label>
+        <select id="bce-secondhandstyle">
+          <option value="tick" ${c.second_hand_style !== 'smooth' ? 'selected' : ''}>Ticking</option>
+          <option value="smooth" ${c.second_hand_style === 'smooth' ? 'selected' : ''}>Smooth sweep</option>
+        </select>
+      </div>
+      ${c.second_hand_style !== 'smooth' ? `
+      <div class="bce-row">
         <label>Second hand bounce (deg)</label>
         <input type="number" id="bce-secbounce" min="0" max="8" step="0.5" value="${c.second_hand_bounce_deg ?? 2}">
       </div>
+      <div class="bce-row">
+        <label>Tick travel time</label>
+        <select id="bce-ticktraveltime">
+          <option value="short" ${c.tick_travel_time === 'short' ? 'selected' : ''}>Short</option>
+          <option value="medium" ${(!c.tick_travel_time || c.tick_travel_time === 'medium') ? 'selected' : ''}>Medium</option>
+          <option value="long" ${c.tick_travel_time === 'long' ? 'selected' : ''}>Long (slower)</option>
+        </select>
+      </div>
+      ` : ''}
       ` : ''}
 
       ${isLedRing ? `
@@ -1671,10 +1743,25 @@ class BroadcastClockCardEditor extends HTMLElement {
         this._emitChange();
       });
     }
+    const secondHandStyleSelect = this._wrap.querySelector('#bce-secondhandstyle');
+    if (secondHandStyleSelect) {
+      secondHandStyleSelect.addEventListener('change', (e) => {
+        this._config.second_hand_style = e.target.value;
+        this._render();
+        this._emitChange();
+      });
+    }
     const secondBounceInput = this._wrap.querySelector('#bce-secbounce');
     if (secondBounceInput) {
       secondBounceInput.addEventListener('change', (e) => {
         this._config.second_hand_bounce_deg = Number(e.target.value);
+        this._emitChange();
+      });
+    }
+    const tickTravelTimeSelect = this._wrap.querySelector('#bce-ticktraveltime');
+    if (tickTravelTimeSelect) {
+      tickTravelTimeSelect.addEventListener('change', (e) => {
+        this._config.tick_travel_time = e.target.value;
         this._emitChange();
       });
     }
