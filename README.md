@@ -161,5 +161,4 @@ bars:
 
 ## Notes
 
-- Configs saved with the older flat `clock_style` (`ring`/`led_ring`/`led_clock`/`digital_led`/`text`/`master_clock`) or `master_clock_case` keys are migrated transparently at read time — no manual changes needed for cards created before this option hierarchy existed.
 - `time_sync_entity`, the smooth second hand, and the visibility/periodic resync (re-anchors the clock immediately when a hidden view/tab becomes visible again, plus a 60s backstop) all derive from the same corrected time source, so the whole card stays in sync with real time regardless of which display options are active.
