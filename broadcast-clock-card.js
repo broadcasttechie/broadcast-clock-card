@@ -1520,37 +1520,67 @@ class BroadcastClockCard extends HTMLElement {
     this._barsEl.innerHTML = '';
     for (const bar of this._bars) {
       const el = document.createElement('div');
-      let active = false;
-      if (bar.entity && this._hass && this._hass.states[bar.entity]) {
-        const st = this._hass.states[bar.entity];
-        // attribute (optional) reads an attribute instead of the entity's
-        // own state -- e.g. a climate entity's hvac_action, or a custom
-        // integration's raw sensor payload field.
-        const raw = bar.attribute ? st.attributes[bar.attribute] : st.state;
-        if (bar.on_values && bar.on_values.trim()) {
-          // on_values (optional, comma-separated) replaces the default
-          // on/true/home/open set entirely -- lets a bar go active on any
-          // custom value (numeric attribute readings, other integrations'
-          // state strings, etc), not just the handful HA itself uses for "on".
-          const onSet = bar.on_values.split(',').map((v) => v.trim().toLowerCase()).filter(Boolean);
-          active = onSet.includes(String(raw).toLowerCase());
-        } else {
-          active = raw === 'on' || raw === 'true' || raw === 'home' || raw === 'open' || raw === true;
-        }
-      }
-      el.className = 'bc-bar' + (active ? '' : ' bc-inactive');
       el.textContent = bar.label || '';
-      if (active) {
-        const color = bar.color || '#3bff6a';
-        el.style.background = `linear-gradient(180deg, ${color}, ${color}cc)`;
-        el.style.boxShadow = `0 0 18px ${color}66`;
-        el.style.color = '#000';
-      } else if (this._barOffStyle === 'tinted') {
-        const dark = darkenHex(bar.color || '#3bff6a', this._barOffBrightness);
-        el.style.background = `linear-gradient(180deg, ${dark}, ${dark}cc)`;
+      if (bar.type === 'multi') {
+        this._paintMultiStateBar(el, bar);
+      } else {
+        this._paintSingleStateBar(el, bar);
       }
       this._barsEl.appendChild(el);
     }
+  }
+
+  // attribute (optional) reads an attribute instead of the entity's own
+  // state -- e.g. a climate entity's hvac_action, or a custom integration's
+  // raw sensor payload field. Shared by both bar types since both need the
+  // same "read one value off one entity" starting point.
+  _rawBarValue(bar) {
+    if (!bar.entity || !this._hass || !this._hass.states[bar.entity]) return undefined;
+    const st = this._hass.states[bar.entity];
+    return bar.attribute ? st.attributes[bar.attribute] : st.state;
+  }
+
+  _paintSingleStateBar(el, bar) {
+    let active = false;
+    const raw = this._rawBarValue(bar);
+    if (raw !== undefined) {
+      if (bar.on_values && bar.on_values.trim()) {
+        // on_values (optional, comma-separated) replaces the default
+        // on/true/home/open set entirely -- lets a bar go active on any
+        // custom value (numeric attribute readings, other integrations'
+        // state strings, etc), not just the handful HA itself uses for "on".
+        const onSet = bar.on_values.split(',').map((v) => v.trim().toLowerCase()).filter(Boolean);
+        active = onSet.includes(String(raw).toLowerCase());
+      } else {
+        active = raw === 'on' || raw === 'true' || raw === 'home' || raw === 'open' || raw === true;
+      }
+    }
+    el.className = 'bc-bar' + (active ? '' : ' bc-inactive');
+    if (active) {
+      const color = bar.color || '#3bff6a';
+      el.style.background = `linear-gradient(180deg, ${color}, ${color}cc)`;
+      el.style.boxShadow = `0 0 18px ${color}66`;
+      el.style.color = '#000';
+    } else if (this._barOffStyle === 'tinted') {
+      const dark = darkenHex(bar.color || '#3bff6a', this._barOffBrightness);
+      el.style.background = `linear-gradient(180deg, ${dark}, ${dark}cc)`;
+    }
+  }
+
+  // Multi-state bars always show a colour for the entity's current value
+  // (looked up in bar.value_colors, case-insensitive) rather than toggling
+  // on/off like single-colour bars do -- an unmapped value falls back to
+  // bar.default_color, so the bar always reads as "showing a state", never
+  // as "off".
+  _paintMultiStateBar(el, bar) {
+    const raw = this._rawBarValue(bar);
+    const rawStr = raw === undefined ? '' : String(raw).toLowerCase();
+    const mapping = (bar.value_colors || []).find((vc) => (vc.value || '').trim().toLowerCase() === rawStr);
+    const color = (mapping && mapping.color) || bar.default_color || '#3a3a3a';
+    el.className = 'bc-bar';
+    el.style.background = `linear-gradient(180deg, ${color}, ${color}cc)`;
+    el.style.boxShadow = `0 0 18px ${color}66`;
+    el.style.color = '#000';
   }
 }
 
@@ -1646,6 +1676,17 @@ class BroadcastClockCardEditor extends HTMLElement {
           background: var(--primary-color, #03a9f4); color: #fff; font-size: 13px;
         }
         .bce-remove-btn { background: #b23b3b; }
+        .bce-subsection-title { font-size: 13px; font-weight: 600; opacity: 0.85; margin: 14px 0 6px; }
+        .bce-valuecolor-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+        .bce-valuecolor-row input[type="text"] {
+          flex: 1; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--divider-color, #444);
+          background: var(--card-background-color, #1c1c1c); color: inherit;
+        }
+        .bce-valuecolor-row input[type="color"] { width: 36px; height: 32px; padding: 0; border: none; background: none; }
+        .bce-vc-remove {
+          cursor: pointer; border: none; border-radius: 6px; width: 28px; height: 28px; flex-shrink: 0;
+          background: #b23b3b; color: #fff; font-size: 15px; line-height: 1;
+        }
       `;
       this.appendChild(style);
       this._wrap = document.createElement('div');
@@ -2053,6 +2094,8 @@ class BroadcastClockCardEditor extends HTMLElement {
 
     const barsEl = this._wrap.querySelector('#bce-bars');
     if (barsEl) c.bars.forEach((bar, idx) => {
+      const isMulti = bar.type === 'multi';
+      const valueColors = bar.value_colors || [];
       const block = document.createElement('div');
       block.className = 'bce-bar-block';
       block.innerHTML = `
@@ -2065,8 +2108,11 @@ class BroadcastClockCardEditor extends HTMLElement {
           <input type="text" data-field="label" value="${bar.label || ''}">
         </div>
         <div class="bce-row">
-          <label>Color</label>
-          <input type="color" data-field="color" value="${bar.color || '#ffffff'}">
+          <label>Bar type</label>
+          <select class="bce-bartype">
+            <option value="single" ${!isMulti ? 'selected' : ''}>Single colour</option>
+            <option value="multi" ${isMulti ? 'selected' : ''}>Multi-state (value &rarr; colour)</option>
+          </select>
         </div>
         <div class="bce-row">
           <label>Entity (optional)</label>
@@ -2076,16 +2122,84 @@ class BroadcastClockCardEditor extends HTMLElement {
           <label>Attribute (optional)</label>
           <input type="text" data-field="attribute" placeholder="blank = use entity's state" value="${bar.attribute || ''}">
         </div>
+        ${!isMulti ? `
+        <div class="bce-row">
+          <label>Color</label>
+          <input type="color" data-field="color" value="${bar.color || '#ffffff'}">
+        </div>
         <div class="bce-row">
           <label>"On" values (optional)</label>
           <input type="text" data-field="on_values" placeholder="blank = on/true/home/open, e.g. active,42" value="${bar.on_values || ''}">
         </div>
+        ` : `
+        <div class="bce-row">
+          <label>Default colour</label>
+          <input type="color" class="bce-defaultcolor" value="${bar.default_color || '#3a3a3a'}">
+        </div>
+        <div class="bce-subsection-title">Value &rarr; colour mappings</div>
+        <div class="bce-valuecolors"></div>
+        <button class="bce-add-btn bce-add-valuecolor" type="button">+ Add value mapping</button>
+        `}
       `;
       block.querySelector('.bce-remove-btn').addEventListener('click', () => {
         this._config.bars = this._config.bars.filter((_, i) => i !== idx);
         this._render();
         this._emitChange();
       });
+      block.querySelector('.bce-bartype').addEventListener('change', (e) => {
+        this._config.bars = this._config.bars.map((b, i) => i === idx ? { ...b, type: e.target.value } : b);
+        this._render();
+        this._emitChange();
+      });
+      const defaultColorInput = block.querySelector('.bce-defaultcolor');
+      if (defaultColorInput) {
+        defaultColorInput.addEventListener('change', (e) => {
+          this._config.bars = this._config.bars.map((b, i) => i === idx ? { ...b, default_color: e.target.value } : b);
+          this._emitChange();
+        });
+      }
+      const valueColorsEl = block.querySelector('.bce-valuecolors');
+      if (valueColorsEl) {
+        valueColors.forEach((vc, vcIdx) => {
+          const row = document.createElement('div');
+          row.className = 'bce-valuecolor-row';
+          row.innerHTML = `
+            <input type="text" class="bce-vc-value" placeholder="value, e.g. home" value="${vc.value || ''}">
+            <input type="color" class="bce-vc-color" value="${vc.color || '#ffffff'}">
+            <button class="bce-vc-remove" type="button">&times;</button>
+          `;
+          const updateValueColor = (patch) => {
+            this._config.bars = this._config.bars.map((b, i) => {
+              if (i !== idx) return b;
+              const vcs = [...(b.value_colors || [])];
+              vcs[vcIdx] = { ...vcs[vcIdx], ...patch };
+              return { ...b, value_colors: vcs };
+            });
+            this._emitChange();
+          };
+          row.querySelector('.bce-vc-value').addEventListener('change', (e) => updateValueColor({ value: e.target.value }));
+          row.querySelector('.bce-vc-color').addEventListener('change', (e) => updateValueColor({ color: e.target.value }));
+          row.querySelector('.bce-vc-remove').addEventListener('click', () => {
+            this._config.bars = this._config.bars.map((b, i) => {
+              if (i !== idx) return b;
+              return { ...b, value_colors: (b.value_colors || []).filter((_, j) => j !== vcIdx) };
+            });
+            this._render();
+            this._emitChange();
+          });
+          valueColorsEl.appendChild(row);
+        });
+      }
+      const addValueColorBtn = block.querySelector('.bce-add-valuecolor');
+      if (addValueColorBtn) {
+        addValueColorBtn.addEventListener('click', () => {
+          this._config.bars = this._config.bars.map((b, i) => i === idx
+            ? { ...b, value_colors: [...(b.value_colors || []), { value: '', color: '#ffffff' }] }
+            : b);
+          this._render();
+          this._emitChange();
+        });
+      }
       const barEntityPicker = block.querySelector('ha-entity-picker[data-field="entity"]');
       barEntityPicker.hass = this._hass;
       barEntityPicker.value = bar.entity || '';
