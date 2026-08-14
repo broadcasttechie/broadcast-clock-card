@@ -729,13 +729,22 @@ class BroadcastClockCard extends HTMLElement {
       }
       .bc-analog-hand {
         stroke-linecap: round;
+        /* Rotated via CSS transform (style.transform in _tickAnalog), not
+           the SVG transform attribute -- an attribute change is a geometry
+           update that can force the browser to re-rasterize the whole SVG
+           subtree (including the blurred, clip-pathed edge glow, one of the
+           more expensive things to redo) every single tick, where a CSS
+           transform can usually be composited on the GPU without touching
+           the rest of the document at all. Purely an internal rendering
+           path change -- every hand ends up at the exact same angle either
+           way. */
+        transform-origin: 100px 100px;
       }
       .bc-analog-hand-hour, .bc-analog-hand-minute {
         stroke: #161616;
       }
       .bc-analog-hand-second {
         stroke: var(--bc-text-color, #ff3b3b);
-        transform-origin: 100px 100px;
         /* transition is set inline per-instance by _applySecondHandBounce(),
            driven by the second_hand_bounce_deg config option -- see
            bezierY1ForOvershootDeg() for why this can't be a plain CSS number. */
@@ -1435,8 +1444,8 @@ class BroadcastClockCard extends HTMLElement {
     if (!hands) return;
     const hourAngle = ((h24 % 12) + m / 60) * 30;
     const minuteAngle = (m + s / 60) * 6;
-    hands.hourHand.setAttribute('transform', `rotate(${hourAngle.toFixed(2)} ${CLOCK_CX} ${CLOCK_CY})`);
-    hands.minuteHand.setAttribute('transform', `rotate(${minuteAngle.toFixed(2)} ${CLOCK_CX} ${CLOCK_CY})`);
+    hands.hourHand.style.transform = `rotate(${hourAngle.toFixed(2)}deg)`;
+    hands.minuteHand.style.transform = `rotate(${minuteAngle.toFixed(2)}deg)`;
     // Second hand uses a CSS transform (not the SVG attribute) so the
     // transition can animate it. Only for 'tick' style -- 'smooth' hands
     // over exclusive ownership of this element's transform to the
