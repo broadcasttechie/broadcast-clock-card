@@ -264,6 +264,30 @@ class BroadcastClockCard extends HTMLElement {
     if (!this._built) this._build();
     this._startClock();
     this._startResizeObserver();
+    this._startVisibilityResync();
+    this._startPeriodicResync();
+  }
+
+  // Defense-in-depth against a stale display after a view switch, a
+  // backgrounded/throttled tab, or anything else that leaves this card's
+  // own per-second timer sitting unfired for a while: _scheduleNextTick
+  // already re-anchors to Date.now() on every tick it runs, so neither of
+  // these corrects accumulated drift within a normally-running loop -- they
+  // just force an immediate re-anchor from other triggers. Applies to every
+  // clock type, not just master_clock.
+  _startVisibilityResync() {
+    if (this._visibilityHandler) return;
+    this._visibilityHandler = () => {
+      if (document.visibilityState === 'visible') this._startClock();
+    };
+    document.addEventListener('visibilitychange', this._visibilityHandler);
+  }
+
+  _startPeriodicResync() {
+    if (this._resyncInterval) return;
+    // Backstop for embedded/kiosk browsers that don't fire visibilitychange
+    // reliably (e.g. some kiosk-mode webviews).
+    this._resyncInterval = setInterval(() => this._startClock(), 60000);
   }
 
   disconnectedCallback() {
@@ -274,6 +298,14 @@ class BroadcastClockCard extends HTMLElement {
     if (this._smoothSecondHandRaf) {
       cancelAnimationFrame(this._smoothSecondHandRaf);
       this._smoothSecondHandRaf = null;
+    }
+    if (this._visibilityHandler) {
+      document.removeEventListener('visibilitychange', this._visibilityHandler);
+      this._visibilityHandler = null;
+    }
+    if (this._resyncInterval) {
+      clearInterval(this._resyncInterval);
+      this._resyncInterval = null;
     }
     if (this._resizeObserver) {
       this._resizeObserver.disconnect();
@@ -746,6 +778,7 @@ class BroadcastClockCard extends HTMLElement {
     this._digitalLedDigits = null;
     this._ampmDots = null;
     this._analogHands = null;
+    this._secondHandDeg = undefined; // new hand element -- snap to the real second, don't sweep in
     this._ringWrap = null;
     this._analogWrap = null;
     this._textStyleScreen = null;
@@ -1321,8 +1354,35 @@ class BroadcastClockCard extends HTMLElement {
     // requestAnimationFrame loop in _syncSmoothSecondHand, which would
     // otherwise fight this once-a-second write.
     if (this._secondHandStyle !== 'smooth') {
-      this._secondHandDeg = (this._secondHandDeg || 0) + 6;
-      hands.secondHand.style.transform = `rotate(${this._secondHandDeg}deg)`;
+      const targetDeg = s * SECOND_HAND_STEP_DEG; // the TRUE current second's angle, 0-354
+      if (this._secondHandDeg === undefined) {
+        // First tick after (re)build -- jump straight to the real second
+        // with no transition, so the hand doesn't visibly sweep in from 12
+        // o'clock (this was the actual cause of "always shows ~2s on
+        // load": the old code started the accumulator at 0 regardless of
+        // the real second, and setConfig's initial tick plus
+        // connectedCallback's immediate tick each added a blind +6deg,
+        // landing on 12deg == "2s" almost every time, never the real time).
+        this._secondHandDeg = targetDeg;
+        hands.secondHand.style.transition = 'none';
+        hands.secondHand.style.transform = `rotate(${this._secondHandDeg}deg)`;
+        requestAnimationFrame(() => this._applySecondHandBounce()); // restore the configured transition
+      } else {
+        // Step forward to land exactly on the real second every time,
+        // instead of blindly assuming "one call = one real second elapsed"
+        // -- self-corrects if a tick was ever missed, called twice back to
+        // back (a real duplicate call is a true no-op, delta 0), or fired
+        // by something other than the normal per-second scheduler (e.g. the
+        // visibility/periodic resync). Never steps backward: a wraparound
+        // (target behind the current position, e.g. 59s -> 0s) still
+        // resolves to a forward +6deg rather than spinning back 354deg, so
+        // the bounce/overshoot transition never has to reverse direction.
+        const prevMod = ((this._secondHandDeg % 360) + 360) % 360;
+        let delta = targetDeg - prevMod;
+        if (delta < 0) delta += 360;
+        this._secondHandDeg += delta;
+        hands.secondHand.style.transform = `rotate(${this._secondHandDeg}deg)`;
+      }
     }
     if (this._dateEl) this._dateEl.textContent = dateStr;
   }
