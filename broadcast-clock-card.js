@@ -589,18 +589,16 @@ class BroadcastClockCard extends HTMLElement {
         font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
         letter-spacing: 0.02em;
       }
-      /* Bulb-styled ring dots -- opt-in per instance via the panel's
-         data-led-style attribute, set from the led_style config option. */
-      .bc-ring-dot-highlight {
-        fill: #fff;
-        opacity: 0;
-        pointer-events: none;
-      }
-      .bc-panel-clock[data-led-style="glowing"] .bc-ring-dot-core {
-        filter: drop-shadow(0 0 3px currentColor) drop-shadow(0 0 7px currentColor);
-      }
-      .bc-panel-clock[data-led-style="glowing"] .bc-ring-dot-highlight {
-        opacity: 0.5;
+      /* Ring dots: on/off/current all share one plain circle each -- no
+         filter, no extra highlight element, same size for on vs off (a real
+         LED doesn't change size when lit, just brightness) so it reads as
+         one LED switching states rather than two different lights. The
+         glow (opt-in per instance via the panel's data-led-style attribute)
+         only ever applies to the single current-second dot, never all 60,
+         which is both the cheap-to-render choice and the one that reads as
+         "the moving light has a glow" rather than "the whole ring glows". */
+      .bc-panel-clock[data-led-style="glowing"] .bc-ring-dot-current {
+        filter: drop-shadow(0 0 4px currentColor);
       }
       .bc-spoken {
         font-weight: 700;
@@ -1189,12 +1187,9 @@ class BroadcastClockCard extends HTMLElement {
   }
 
   _buildDots() {
-    // Each dot is a <g> wrapping the coloured core circle plus a fixed white
-    // "glass" highlight -- the highlight's own opacity is driven entirely by
-    // CSS (0 for the plain flat-dot look, visible for the bulb-styled
-    // "glowing" led_style), and both circles share the group's opacity in
-    // _tickDotsRing so the highlight dims along with its dot instead of
-    // needing separate per-tick bookkeeping.
+    // One plain circle per dot -- no filter, no wrapping group, no separate
+    // highlight element. Keeping this as light as possible matters: it's
+    // 60 elements, repainted on every tick this clock type is shown.
     const NS = 'http://www.w3.org/2000/svg';
     const cx = 150, cy = 150, r = 140;
     this._dots = [];
@@ -1202,25 +1197,13 @@ class BroadcastClockCard extends HTMLElement {
       const angle = -Math.PI / 2 + (i * (2 * Math.PI / 60));
       const dx = cx + r * Math.cos(angle);
       const dy = cy + r * Math.sin(angle);
-      const group = document.createElementNS(NS, 'g');
-      group.setAttribute('class', 'bc-ring-dot');
-
       const circle = document.createElementNS(NS, 'circle');
       circle.setAttribute('cx', dx.toFixed(2));
       circle.setAttribute('cy', dy.toFixed(2));
-      circle.setAttribute('r', '4.5');
+      circle.setAttribute('r', '5');
       circle.setAttribute('class', 'bc-ring-dot-core');
-      group.appendChild(circle);
-
-      const highlight = document.createElementNS(NS, 'circle');
-      highlight.setAttribute('cx', (dx - 1.3).toFixed(2));
-      highlight.setAttribute('cy', (dy - 1.3).toFixed(2));
-      highlight.setAttribute('r', '1.3');
-      highlight.setAttribute('class', 'bc-ring-dot-highlight');
-      group.appendChild(highlight);
-
-      this._svg.appendChild(group);
-      this._dots.push({ group, circle });
+      this._svg.appendChild(circle);
+      this._dots.push(circle);
     }
     this._applyRingColors();
   }
@@ -1234,7 +1217,7 @@ class BroadcastClockCard extends HTMLElement {
     if (!this._dots) return;
     for (let i = 0; i < 60; i++) {
       const color = this._dotColorForIndex(i);
-      const { circle } = this._dots[i];
+      const circle = this._dots[i];
       circle.setAttribute('fill', color);
       circle.style.color = color;
     }
@@ -1344,13 +1327,17 @@ class BroadcastClockCard extends HTMLElement {
   // Only repaints the dots whose lit/emphasis state actually changed since
   // the last tick, instead of all 60 unconditionally every second. On a
   // normal tick exactly one second elapses, so exactly two dots ever change
-  // (the newly-lit one, and the previous "current" dot shrinking back to
-  // plain-lit) -- repainting the other 58 every second was pure waste, and
-  // expensive waste at that: each dot carries a drop-shadow filter under
-  // the glowing led_style, and 60 filtered-element repaints/second is
-  // enough to visibly bog down weaker hardware (reported as the clock
-  // skipping several seconds at a time). Colour is handled separately in
-  // _applyRingColors -- it's static per dot, never touched here at all.
+  // (the newly-current one, and the previous current dot dropping back to
+  // plain-lit) -- repainting the other 58 every second was pure waste.
+  // Combined with each dot being a single plain circle (no filter, no
+  // extra highlight element -- see _buildDots) and the glow only ever
+  // applying to at most one dot at a time (see the CSS), this keeps the
+  // per-tick cost tiny regardless of led_style, which matters on weaker
+  // hardware -- unnecessary per-dot filters were both a real performance
+  // cost (reported as the clock skipping several seconds at a time) and a
+  // source of GPU rendering artifacts on at least one tablet. Colour is
+  // handled separately in _applyRingColors -- it's static per dot, never
+  // touched here at all.
   _tickDotsRing(s) {
     if (!this._dots) return;
     const offOpacity = this._ledOffStyle === 'blank' ? '0' : '0.28';
@@ -1371,16 +1358,17 @@ class BroadcastClockCard extends HTMLElement {
     const emphasizedIndex = litCount % 60; // 60 -> 0 (top), else litCount itself
 
     const paintDot = (i) => {
-      const { group, circle } = this._dots[i];
+      const circle = this._dots[i];
       const effectiveSecond = i === 0 ? 60 : i;
-      if (effectiveSecond <= litCount) {
-        const isCurrent = i === emphasizedIndex && this._emphasizeCurrentSecond;
-        circle.setAttribute('r', isCurrent ? '7.5' : '5');
-        group.setAttribute('opacity', '1');
-      } else {
-        circle.setAttribute('r', '3.5');
-        group.setAttribute('opacity', offOpacity);
-      }
+      const lit = effectiveSecond <= litCount;
+      const isCurrent = lit && i === emphasizedIndex && this._emphasizeCurrentSecond;
+      // Same radius for off vs on -- a real LED doesn't change size when
+      // lit, only brightness -- with just a modest bump (not the old
+      // 3.5/5/7.5 spread) for the single current-second dot so it still
+      // reads as "the moving light" without looking like a different bulb.
+      circle.setAttribute('r', isCurrent ? '6' : '5');
+      circle.setAttribute('opacity', lit ? '1' : offOpacity);
+      circle.classList.toggle('bc-ring-dot-current', isCurrent);
     };
 
     const paintedForSameConfig = this._prevOffOpacity === offOpacity
