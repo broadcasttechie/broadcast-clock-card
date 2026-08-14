@@ -1357,16 +1357,23 @@ class BroadcastClockCard extends HTMLElement {
     // Lit-dot count = seconds elapsed since the top of the minute -- s=0
     // (a fresh minute just starting) wraps to a full 60 rather than 0, so
     // the ring never goes fully dark; it reads as "60 seconds just
-    // completed", not "nothing has happened yet". The emphasized dot is
-    // always the most-recently-lit one (litCount - 1), not index s itself
-    // -- at s=1 only one dot (index 0) is lit at all, so s would point past
-    // the end of the lit range.
+    // completed", not "nothing has happened yet".
+    //
+    // Geometric dot index 0 sits at 12 o'clock (see _buildDots); index i
+    // sits i*6deg clockwise from there. The 1-second position is index 1
+    // (one step clockwise of 12), and the 60-second position is index 0
+    // (12 o'clock itself) -- so a geometric index's "effective second
+    // number" wraps 0 -> 60 for comparison purposes, the mirror image of
+    // litCount's own s=0 -> 60 wrap. A dot is lit/emphasized by comparing
+    // against that effective number, not its raw index -- index 0 (top)
+    // must stay dark for seconds 1-59 and only light for the 60th.
     const litCount = s === 0 ? 60 : s;
-    const emphasizedIndex = litCount - 1;
+    const emphasizedIndex = litCount % 60; // 60 -> 0 (top), else litCount itself
 
     const paintDot = (i) => {
       const { group, circle } = this._dots[i];
-      if (i < litCount) {
+      const effectiveSecond = i === 0 ? 60 : i;
+      if (effectiveSecond <= litCount) {
         const isCurrent = i === emphasizedIndex && this._emphasizeCurrentSecond;
         circle.setAttribute('r', isCurrent ? '7.5' : '5');
         group.setAttribute('opacity', '1');
