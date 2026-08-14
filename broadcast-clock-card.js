@@ -1361,14 +1361,21 @@ class BroadcastClockCard extends HTMLElement {
       const circle = this._dots[i];
       const effectiveSecond = i === 0 ? 60 : i;
       const lit = effectiveSecond <= litCount;
-      const isCurrent = lit && i === emphasizedIndex && this._emphasizeCurrentSecond;
+      // "Is this the current-second dot" and "should it get the size bump"
+      // are separate: emphasize_current_second only gates the size bump,
+      // not the glow class -- the glow (bc-ring-dot-current, opt-in via
+      // led_style="glowing") must still land on the current dot even with
+      // emphasis off, or glowing and flat become visually identical for
+      // anyone who's turned emphasis off (as this card's own config does).
+      const isCurrentPosition = lit && i === emphasizedIndex;
+      const sizeBump = isCurrentPosition && this._emphasizeCurrentSecond;
       // Same radius for off vs on -- a real LED doesn't change size when
       // lit, only brightness -- with just a modest bump (not the old
       // 3.5/5/7.5 spread) for the single current-second dot so it still
       // reads as "the moving light" without looking like a different bulb.
-      circle.setAttribute('r', isCurrent ? '6' : '5');
+      circle.setAttribute('r', sizeBump ? '6' : '5');
       circle.setAttribute('opacity', lit ? '1' : offOpacity);
-      circle.classList.toggle('bc-ring-dot-current', isCurrent);
+      circle.classList.toggle('bc-ring-dot-current', isCurrentPosition);
     };
 
     const paintedForSameConfig = this._prevOffOpacity === offOpacity
