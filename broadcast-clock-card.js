@@ -191,6 +191,11 @@ class BroadcastClockCard extends HTMLElement {
     this._ledStyle = this._normalizeEnum(this._config.led_style ?? legacy.led_style, LED_STYLES, 'glowing');
     this._ledOffStyle = this._normalizeEnum(this._config.led_off_style, LED_OFF_STYLES, 'dull');
     this._emphasizeCurrentSecond = this._config.emphasize_current_second !== false;
+    // Default disabled: LEDs invert -- whatever would be lit in normal
+    // "fill" mode is dark, and vice versa, so the ring starts a fresh
+    // minute fully dark (the inverse of fill's fully-lit :00) and fills
+    // back in as the minute progresses toward :59.
+    this._ringCountdown = this._config.ring_countdown === true;
     this._textFont = this._normalizeEnum(this._config.text_font ?? legacy.text_font, TEXT_FONTS, 'normal');
     this._showSeconds = (this._config.show_seconds ?? legacy.show_seconds) !== false;
     this._secondsPlacement = this._normalizeEnum(this._config.seconds_placement ?? legacy.seconds_placement, SECONDS_PLACEMENTS, 'newline');
@@ -335,6 +340,7 @@ class BroadcastClockCard extends HTMLElement {
       ring_color: '#ff3b3b',
       led_style: 'glowing',
       led_off_style: 'dull',
+      ring_countdown: false,
       emphasize_current_second: true,
       text_color: '#ff3b3b',
       text_font: 'normal',
@@ -1402,13 +1408,20 @@ class BroadcastClockCard extends HTMLElement {
     const paintDot = (i) => {
       const { circle, highlight } = this._dots[i];
       const effectiveSecond = i === 0 ? 60 : i;
-      const lit = effectiveSecond <= litCount;
-      // The size bump is separate from "is this dot lit": emphasize_
-      // current_second only gates the size bump on the one current-second
-      // dot; the glow (bc-ring-dot-lit, opt-in via led_style="glowing"/
-      // "bulb") tracks lit state itself, so every lit dot glows regardless
-      // of the emphasis setting.
-      const isCurrentPosition = lit && i === emphasizedIndex;
+      const litRaw = effectiveSecond <= litCount;
+      // Countdown mode is the literal inverse of normal "fill" mode: every
+      // dot that would be lit is dark, and vice versa -- so the ring starts
+      // each minute fully dark (:00) and fills back up toward fully lit by
+      // :59, instead of fill's fully-lit-at-:00-then-empties-back-up.
+      const lit = this._ringCountdown ? !litRaw : litRaw;
+      // "Is this the current/most-recently-changed position" is independent
+      // of both lit state and countdown -- it's always the dot whose state
+      // just flipped this tick, whether that flip was lighting it (fill) or
+      // darkening it (countdown), so the size bump and moving-position cue
+      // behave identically either way. The glow (bc-ring-dot-lit, opt-in
+      // via led_style="glowing"/"bulb") tracks final lit state itself, so
+      // every currently-lit dot glows regardless of emphasis or countdown.
+      const isCurrentPosition = i === emphasizedIndex;
       const sizeBump = isCurrentPosition && this._emphasizeCurrentSecond;
       // Same radius for off vs on -- a real LED doesn't change size when
       // lit, only brightness -- with just a modest bump (not the old
@@ -1421,15 +1434,16 @@ class BroadcastClockCard extends HTMLElement {
     };
 
     const paintedForSameConfig = this._prevOffOpacity === offOpacity
-      && this._prevEmphasizeCurrentSecond === this._emphasizeCurrentSecond;
+      && this._prevEmphasizeCurrentSecond === this._emphasizeCurrentSecond
+      && this._prevRingCountdown === this._ringCountdown;
     if (paintedForSameConfig && this._prevLitCount !== undefined && litCount === this._prevLitCount + 1) {
       if (this._prevEmphasizedIndex !== undefined) paintDot(this._prevEmphasizedIndex);
       paintDot(emphasizedIndex);
     } else {
       // First tick after a (re)build, a resync/missed-tick jump, the
       // once-a-minute 60->1 wraparound, or led_off_style/
-      // emphasize_current_second having changed since the last tick --
-      // repaint everything to guarantee correctness.
+      // emphasize_current_second/ring_countdown having changed since the
+      // last tick -- repaint everything to guarantee correctness.
       for (let i = 0; i < 60; i++) paintDot(i);
     }
 
@@ -1437,6 +1451,7 @@ class BroadcastClockCard extends HTMLElement {
     this._prevEmphasizedIndex = emphasizedIndex;
     this._prevOffOpacity = offOpacity;
     this._prevEmphasizeCurrentSecond = this._emphasizeCurrentSecond;
+    this._prevRingCountdown = this._ringCountdown;
   }
 
   _tickAnalog(h24, m, s, dateStr) {
@@ -1614,6 +1629,7 @@ class BroadcastClockCardEditor extends HTMLElement {
       ring_color: '#ff3b3b',
       led_style: 'glowing',
       led_off_style: 'dull',
+      ring_countdown: false,
       emphasize_current_second: true,
       text_color: '#ff3b3b',
       text_font: 'normal',
@@ -1809,6 +1825,10 @@ class BroadcastClockCardEditor extends HTMLElement {
           <option value="blank" ${c.led_off_style === 'blank' ? 'selected' : ''}>Blank (invisible until lit)</option>
         </select>
       </div>
+      <div class="bce-row">
+        <label>Countdown mode</label>
+        <input type="checkbox" id="bce-ringcountdown" ${c.ring_countdown === true ? 'checked' : ''}>
+      </div>
       ` : ''}
 
       ${hasTextStyle ? `
@@ -1998,6 +2018,13 @@ class BroadcastClockCardEditor extends HTMLElement {
     if (ledOffStyleSelect) {
       ledOffStyleSelect.addEventListener('change', (e) => {
         this._config.led_off_style = e.target.value;
+        this._emitChange();
+      });
+    }
+    const ringCountdownInput = this._wrap.querySelector('#bce-ringcountdown');
+    if (ringCountdownInput) {
+      ringCountdownInput.addEventListener('change', (e) => {
+        this._config.ring_countdown = e.target.checked;
         this._emitChange();
       });
     }
