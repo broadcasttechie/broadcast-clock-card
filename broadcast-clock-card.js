@@ -1805,7 +1805,7 @@ if (!customElements.get('broadcast-clock-card')) {
   window.customCards.push({
     type: 'broadcast-clock-card',
     name: 'Broadcast Clock',
-    description: 'A broadcast-studio style on-air clock (master clock, LED ring or text-only, each with sub-options) with optional status bars and flexible layouts.'
+    description: 'A radio/TV studio-style master clock (analog, LED ring, or text) with optional ON AIR / mic-live status bars -- for broadcast studios, control rooms, and streaming/podcast setups.'
   });
 }
 

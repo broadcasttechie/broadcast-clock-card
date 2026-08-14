@@ -1,6 +1,13 @@
 # Broadcast Clock Card
 
-A broadcast-studio style on-air clock for Home Assistant Lovelace dashboards — Master Clock (studio analog), LED Ring (60-dot second ring with a digital or segment-LED readout), or plain Text — with an optional row of configurable status bars (recording / on-air / live indicators, single-colour or multi-state).
+A broadcast-studio style on-air clock for Home Assistant Lovelace dashboards — built for radio studio clocks, TV studio and control-room master clocks, podcast/streaming setups, and any desk or wall display that wants a proper clock alongside live status indicators. Choose a Master Clock (studio analog), LED Ring (60-dot second ring with a digital or segment-LED readout), or plain Text display, plus an optional row of configurable status bars — ON AIR lights, recording indicators, streaming/mic-live lights, or any other single-colour or multi-state status synced to a Home Assistant entity.
+
+## Use cases
+
+- **Radio studio on-air clock** — master clock plus an ON AIR / MIC LIVE light bar synced to your mixing desk or broadcast software's status.
+- **TV studio / control room master clock** — a large, legible studio-analog or LED-ring clock for a gallery or control room wall.
+- **Podcast or streaming desk** — a "LIVE" or mic-status indicator next to the time, driven by an OBS/Teams/Zoom "in call"/"mic muted" sensor.
+- **Home office on-air light** — a simple recording/on-air indicator tied to a webcam, mic, or do-not-disturb sensor, without dedicated hardware.
 
 ## Screenshots
 
@@ -164,6 +171,7 @@ bars:
 ## Notes
 
 - `time_sync_entity`, the smooth second hand, and the visibility/periodic resync (re-anchors the clock immediately when a hidden view/tab becomes visible again, plus a 60s backstop) all derive from the same corrected time source, so the whole card stays in sync with real time regardless of which display options are active.
+- This card shows wall-clock time, not a running production/session timecode. A true broadcast **timecode clock** display (SMPTE/LTC-style `HH:MM:SS:FF`, counting up from a session start rather than time-of-day) is being considered as a future addition — not implemented yet.
 
 ## Localization
 
