@@ -17,7 +17,7 @@ const LAYOUTS = ['clock_bars', 'bars_clock', 'clock_only', 'bars_only', 'stacked
 // Top-level clock hierarchy: 3 clock types, each with their own sub-options
 // (see BroadcastClockCard.setConfig for the full field list and defaults).
 const CLOCK_TYPES = ['master_clock', 'led_ring', 'text'];
-const LED_STYLES = ['glowing', 'flat'];
+const LED_STYLES = ['flat', 'glowing', 'bulb'];
 const LED_OFF_STYLES = ['dull', 'blank'];
 const TEXT_FONTS = ['segment', 'normal'];
 const SECONDS_PLACEMENTS = ['inline', 'newline', 'newline_large'];
@@ -589,22 +589,34 @@ class BroadcastClockCard extends HTMLElement {
         font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
         letter-spacing: 0.02em;
       }
-      /* Ring dots: on/off/current all share one plain circle each -- no
-         extra highlight element, same size for on vs off (a real LED
-         doesn't change size when lit, just brightness) so it reads as one
-         LED switching states rather than two different lights. Every lit
-         dot glows (opt-in per instance via the panel's data-led-style
-         attribute), not just the current one, for a proper "glowing LED
-         ring" look -- this stays cheap because of how the tick loop
-         applies it: a dot's glow class is only ever touched once, the tick
-         it first lights, never re-touched on every subsequent tick just
-         because it's still lit (see _tickDotsRing). The previous version's
-         white highlight circle sitting on top of a filtered element,
-         re-touched on all 60 dots every second, is gone for good -- that
-         combination (not the filter alone) is what caused both the
-         rendering artifacts and the heaviest part of the performance cost. */
-      .bc-panel-clock[data-led-style="glowing"] .bc-ring-dot-lit {
+      /* Ring dots: on/off/current all share one plain circle each, same
+         size for on vs off (a real LED doesn't change size when lit, just
+         brightness) so it reads as one LED switching states rather than
+         two different lights. Every lit dot glows (led_style "glowing" or
+         "bulb"), not just the current one, for a proper "glowing LED ring"
+         look -- this stays cheap because of how the tick loop applies it:
+         a dot's glow class is only ever touched once, the tick it first
+         lights, never re-touched on every subsequent tick just because
+         it's still lit (see _tickDotsRing). "bulb" additionally builds a
+         highlight circle per dot (only for that style -- "flat" and
+         "glowing" don't pay for the extra element at all, see _buildDots),
+         for a glassier look; "flat" gets neither the filter nor the
+         highlight. Re-touching a highlight-on-top-of-a-filtered-element on
+         all 60 dots every single second (not the combination existing at
+         all) is what caused both the original rendering artifacts and the
+         heaviest part of the performance cost -- that's gone for good
+         regardless of which style is picked. */
+      .bc-panel-clock[data-led-style="glowing"] .bc-ring-dot-core.bc-ring-dot-lit,
+      .bc-panel-clock[data-led-style="bulb"] .bc-ring-dot-core.bc-ring-dot-lit {
         filter: drop-shadow(0 0 2px currentColor) drop-shadow(0 0 5px currentColor);
+      }
+      .bc-ring-dot-highlight {
+        fill: #fff;
+        opacity: 0;
+        pointer-events: none;
+      }
+      .bc-ring-dot-highlight.bc-ring-dot-lit {
+        opacity: 0.5;
       }
       .bc-spoken {
         font-weight: 700;
@@ -1193,11 +1205,13 @@ class BroadcastClockCard extends HTMLElement {
   }
 
   _buildDots() {
-    // One plain circle per dot -- no filter, no wrapping group, no separate
-    // highlight element. Keeping this as light as possible matters: it's
-    // 60 elements, repainted on every tick this clock type is shown.
+    // One plain circle per dot for "flat"/"glowing" -- no wrapping group,
+    // no highlight element, keeping it as light as possible since it's 60
+    // elements. "bulb" additionally builds a highlight circle per dot (the
+    // extra element only exists for the style that actually uses it).
     const NS = 'http://www.w3.org/2000/svg';
     const cx = 150, cy = 150, r = 140;
+    const wantHighlight = this._ledStyle === 'bulb';
     this._dots = [];
     for (let i = 0; i < 60; i++) {
       const angle = -Math.PI / 2 + (i * (2 * Math.PI / 60));
@@ -1209,7 +1223,18 @@ class BroadcastClockCard extends HTMLElement {
       circle.setAttribute('r', '5');
       circle.setAttribute('class', 'bc-ring-dot-core');
       this._svg.appendChild(circle);
-      this._dots.push(circle);
+
+      let highlight = null;
+      if (wantHighlight) {
+        highlight = document.createElementNS(NS, 'circle');
+        highlight.setAttribute('cx', (dx - 1.3).toFixed(2));
+        highlight.setAttribute('cy', (dy - 1.3).toFixed(2));
+        highlight.setAttribute('r', '1.3');
+        highlight.setAttribute('class', 'bc-ring-dot-highlight');
+        this._svg.appendChild(highlight);
+      }
+
+      this._dots.push({ circle, highlight });
     }
     this._applyRingColors();
   }
@@ -1223,7 +1248,7 @@ class BroadcastClockCard extends HTMLElement {
     if (!this._dots) return;
     for (let i = 0; i < 60; i++) {
       const color = this._dotColorForIndex(i);
-      const circle = this._dots[i];
+      const { circle } = this._dots[i];
       circle.setAttribute('fill', color);
       circle.style.color = color;
     }
@@ -1366,14 +1391,14 @@ class BroadcastClockCard extends HTMLElement {
     const emphasizedIndex = litCount % 60; // 60 -> 0 (top), else litCount itself
 
     const paintDot = (i) => {
-      const circle = this._dots[i];
+      const { circle, highlight } = this._dots[i];
       const effectiveSecond = i === 0 ? 60 : i;
       const lit = effectiveSecond <= litCount;
       // The size bump is separate from "is this dot lit": emphasize_
       // current_second only gates the size bump on the one current-second
-      // dot; the glow (bc-ring-dot-lit, opt-in via led_style="glowing")
-      // tracks lit state itself, so every lit dot glows regardless of the
-      // emphasis setting.
+      // dot; the glow (bc-ring-dot-lit, opt-in via led_style="glowing"/
+      // "bulb") tracks lit state itself, so every lit dot glows regardless
+      // of the emphasis setting.
       const isCurrentPosition = lit && i === emphasizedIndex;
       const sizeBump = isCurrentPosition && this._emphasizeCurrentSecond;
       // Same radius for off vs on -- a real LED doesn't change size when
@@ -1383,6 +1408,7 @@ class BroadcastClockCard extends HTMLElement {
       circle.setAttribute('r', sizeBump ? '6' : '5');
       circle.setAttribute('opacity', lit ? '1' : offOpacity);
       circle.classList.toggle('bc-ring-dot-lit', lit);
+      if (highlight) highlight.classList.toggle('bc-ring-dot-lit', lit);
     };
 
     const paintedForSameConfig = this._prevOffOpacity === offOpacity
@@ -1717,8 +1743,9 @@ class BroadcastClockCardEditor extends HTMLElement {
       <div class="bce-row">
         <label>LED style</label>
         <select id="bce-ledstyle">
-          <option value="glowing" ${c.led_style !== 'flat' ? 'selected' : ''}>Glowing bulb</option>
           <option value="flat" ${c.led_style === 'flat' ? 'selected' : ''}>Flat dot</option>
+          <option value="glowing" ${(!c.led_style || c.led_style === 'glowing') ? 'selected' : ''}>Glowing LED</option>
+          <option value="bulb" ${c.led_style === 'bulb' ? 'selected' : ''}>Glowing LED bulb (with highlight)</option>
         </select>
       </div>
       <div class="bce-row">
