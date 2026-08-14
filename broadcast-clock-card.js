@@ -785,18 +785,20 @@ class BroadcastClockCard extends HTMLElement {
       row.appendChild(svg);
       return { svg, segs };
     };
-    const makeDotPair = (row, extraClass) => {
+    const makeDotPair = (row, extraClass, cyTop, cyBot) => {
       // Shape shared by the HH:MM colon, the (optional) MM:SS colon, and the
       // AM/PM indicator -- all just "two stacked circles", differing only in
-      // which dot(s) light up and whether they blink.
+      // vertical spacing (colons stay close together like a colon; AM/PM
+      // spreads to near the top/bottom of the element so it doesn't read as
+      // a second colon), which dot(s) light up, and whether they blink.
       const svg = document.createElementNS(NS, 'svg');
       svg.setAttribute('viewBox', '0 0 20 100');
       svg.setAttribute('class', 'bc-digitalled-colon' + (extraClass ? ' ' + extraClass : ''));
       const top = document.createElementNS(NS, 'circle');
-      top.setAttribute('cx', '10'); top.setAttribute('cy', '34'); top.setAttribute('r', '7');
+      top.setAttribute('cx', '10'); top.setAttribute('cy', String(cyTop ?? 34)); top.setAttribute('r', '7');
       top.setAttribute('class', 'seg');
       const bot = document.createElementNS(NS, 'circle');
-      bot.setAttribute('cx', '10'); bot.setAttribute('cy', '66'); bot.setAttribute('r', '7');
+      bot.setAttribute('cx', '10'); bot.setAttribute('cy', String(cyBot ?? 66)); bot.setAttribute('r', '7');
       bot.setAttribute('class', 'seg');
       svg.appendChild(top); svg.appendChild(bot);
       row.appendChild(svg);
@@ -824,7 +826,10 @@ class BroadcastClockCard extends HTMLElement {
     }
 
     // Always appended last to row1 -- "LED dot on the right hand side".
-    const ampm = this._timeFormat === '12h' ? makeDotPair(row1, 'bc-digitalled-ampm') : null;
+    // Spread near the top/bottom (r=7 stays fully inside the 0-100 viewBox
+    // from cy=7 to cy=93) rather than the colon's close-together spacing, so
+    // it reads as a top/bottom AM/PM pair and not a second colon.
+    const ampm = this._timeFormat === '12h' ? makeDotPair(row1, 'bc-digitalled-ampm', 10, 90) : null;
 
     this._digitalLedDigits = { h1, h2, colon1, m1, m2, colon2, s1, s2 };
     this._ampmDots = ampm;
