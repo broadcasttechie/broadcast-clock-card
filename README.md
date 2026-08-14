@@ -80,7 +80,8 @@ time_format: 12h
 | `show_date` | boolean | `true` | Show/hide the date line |
 | `date_format` | string | `long` | `long` ("Friday, 14 August"), `long_year` (+ year), `short` ("14 Aug 2026"), `numeric` ("14/08/2026") |
 | `date_font` | string | `default` | `default` or `mono` (monospace) |
-| `show_spoken_time` | boolean | `true` | Show/hide the plain-English spoken time line (e.g. "Quarter past six") |
+| `show_spoken_time` | boolean | `true` | Show/hide the spoken time line (e.g. "Quarter past six") |
+| `language` | string | *(none)* | Overrides Home Assistant's own language for the date line and spoken time (e.g. `de`, `fr`) — useful for a shared/wall-mounted display that needs a fixed language regardless of who's logged in. Blank follows `hass.language`. The visual editor itself always follows your own `hass.language`, independent of this setting |
 | `time_sync_entity` | string | *(none)* | Optional entity (e.g. a template sensor ticking every second) whose `last_updated` timestamp corrects the clock against server time instead of the browser/tablet's own clock. Corrections apply at most once a minute regardless of how often the entity itself updates |
 | `bars` | list | 4 demo bars | Status bars — see [Status bars](#status-bars) |
 | `bar_off_style` | string | `neutral` | Inactive single-colour bar background: `neutral` (fixed dark grey) or `tinted` (a darker shade of the bar's own on-colour) |
@@ -168,4 +169,6 @@ bars:
 
 The visual editor follows your Home Assistant profile's language (`hass.language`), falling back to the base language (e.g. `fr` for `fr-CA`) and then English if a locale isn't translated yet. English is the only translation shipped so far — contributions adding another language to the `CARD_TRANSLATIONS` object in `broadcast-clock-card.js` are welcome.
 
-The date line already follows your HA language automatically (via `Intl`/`toLocaleDateString`), no translation needed there. The spoken-time line ("Quarter past six") is English-only for now — it's phrase grammar, not a dictionary swap, so it needs real per-language logic rather than translated strings.
+The date line follows `hass.language` automatically (via `Intl`/`toLocaleDateString`), no translation needed there. The spoken-time line ("Quarter past six") is built per-language via `SPOKEN_TIME_LOCALES`, since telling-time idiom is real sentence grammar, not a dictionary swap (English "half past six" vs German "halb sieben" — literally "half toward seven"). English is the only language implemented so far; a language with no entry falls back to English automatically. Adding a language means implementing its own `numberWord`/`spokenTime` pair, not translating strings — contributions from fluent speakers are especially welcome here, since getting the idiom right isn't something a dictionary lookup can verify.
+
+Use `language` (see [Top level](#top-level) options) to pin the card's own displayed language independently of the editor/your own HA profile — useful for a shared or wall-mounted display.

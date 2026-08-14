@@ -65,6 +65,7 @@ const CARD_TRANSLATIONS = {
       show_date: 'Show date line',
       date_format: 'Date format',
       date_font: 'Date font',
+      language: 'Language override',
       time_sync_entity: 'Time sync entity',
       show_spoken_time: 'Show spoken time line',
       bar_off_colour: 'Bar off colour',
@@ -126,7 +127,8 @@ const CARD_TRANSLATIONS = {
     placeholder: {
       attribute: "blank = use entity's state",
       on_values: 'blank = on/true/home/open, e.g. active,42',
-      value_mapping: 'value, e.g. home'
+      value_mapping: 'value, e.g. home',
+      language: 'blank = follow Home Assistant language, e.g. de, fr, es'
     },
     misc: {
       bar_n: 'Bar {n}',
@@ -156,6 +158,52 @@ function translate(lang, path) {
     if (value !== undefined) return value;
   }
   return path;
+}
+
+// Spoken time ("Quarter past six") is sentence grammar, not translatable
+// strings -- each language gets its own self-contained numberWord/spokenTime
+// pair rather than a shared template, since telling-time idiom genuinely
+// differs (English "half past six" vs German "halb sieben", literally "half
+// [toward] seven"). Unimplemented languages fall back to English, same as
+// CARD_TRANSLATIONS -- see _resolveSpokenTimeLocale.
+const SPOKEN_TIME_LOCALES = {
+  en: {
+    numberWord(n) {
+      const ONES = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine',
+        'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen',
+        'eighteen', 'nineteen'];
+      const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty'];
+      if (n < 20) return ONES[n];
+      const t = Math.floor(n / 10), o = n % 10;
+      return TENS[t] + (o ? '-' + ONES[o] : '');
+    },
+    spokenTime(h24, m) {
+      let h12 = h24 % 12;
+      if (h12 === 0) h12 = 12;
+      let nextH12 = (h24 + 1) % 12;
+      if (nextH12 === 0) nextH12 = 12;
+      const hourWord = this.numberWord(h12);
+      const nextHourWord = this.numberWord(nextH12);
+      const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+      if (m === 0) return cap(`exactly ${hourWord} o'clock`);
+      if (m === 15) return cap(`quarter past ${hourWord}`);
+      if (m === 30) return cap(`half past ${hourWord}`);
+      if (m === 45) return cap(`quarter to ${nextHourWord}`);
+      if (m < 30) {
+        return cap(`${this.numberWord(m)} minute${m === 1 ? '' : 's'} past ${hourWord}`);
+      }
+      const rem = 60 - m;
+      return cap(`${this.numberWord(rem)} minute${rem === 1 ? '' : 's'} to ${nextHourWord}`);
+    }
+  }
+};
+
+function _resolveSpokenTimeLocale(lang) {
+  for (const l of _localeFallbackChain(lang)) {
+    if (SPOKEN_TIME_LOCALES[l]) return SPOKEN_TIME_LOCALES[l];
+  }
+  return SPOKEN_TIME_LOCALES.en;
 }
 
 // Legacy configs (saved before this settings hierarchy existed) used a flat
@@ -309,6 +357,11 @@ class BroadcastClockCard extends HTMLElement {
     this._showDate = this._config.show_date !== false;
     this._dateFormat = this._normalizeEnum(this._config.date_format, DATE_FORMATS, 'long');
     this._dateFont = this._normalizeEnum(this._config.date_font, DATE_FONTS, 'default');
+    // Overrides hass.language for the card's own rendered output (date +
+    // spoken time) only -- the editor UI always follows hass.language,
+    // since that's what the person configuring the card sees, not what a
+    // shared/wall-mounted display needs to show. Blank = follow HA.
+    this._language = (this._config.language || '').trim();
     this._timeSyncEntity = this._config.time_sync_entity || '';
     this._ringColorMode = this._normalizeRingColorMode(this._config.ring_color_mode);
     this._ringColor = this._config.ring_color || '#ff3b3b';
@@ -468,6 +521,7 @@ class BroadcastClockCard extends HTMLElement {
       show_date: true,
       date_format: 'long',
       date_font: 'default',
+      language: '',
       time_sync_entity: '',
       show_case: true,
       ring_color_mode: 'rainbow',
@@ -1477,12 +1531,15 @@ class BroadcastClockCard extends HTMLElement {
     if (this._spokenEl) this._spokenEl.textContent = this._showSpoken ? this._spokenTime(h24, m) : ' ';
   }
 
+  // Overridable via the `language` config option -- see setConfig -- rather
+  // than always hass.language, so a shared/wall-mounted display can be
+  // pinned to a fixed language regardless of who's logged in.
+  _effectiveLanguage() {
+    return this._language || (this._hass && this._hass.language) || 'en';
+  }
+
   _formatDate(now) {
-    // Explicit hass.language rather than the browser/OS locale (the
-    // `undefined` default) -- these can differ (e.g. a shared wall tablet
-    // left in English while the HA user profile is set to German), and the
-    // date should follow the HA-configured language, not the device's.
-    const lang = this._hass && this._hass.language;
+    const lang = this._effectiveLanguage();
     switch (this._dateFormat) {
       case 'long_year':
         return now.toLocaleDateString(lang, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
@@ -1665,34 +1722,12 @@ class BroadcastClockCard extends HTMLElement {
     if (this._dateEl) this._dateEl.textContent = dateStr;
   }
 
-  _numberWord(n) {
-    const ONES = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine',
-      'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen',
-      'eighteen', 'nineteen'];
-    const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty'];
-    if (n < 20) return ONES[n];
-    const t = Math.floor(n / 10), o = n % 10;
-    return TENS[t] + (o ? '-' + ONES[o] : '');
-  }
-
+  // Delegates to SPOKEN_TIME_LOCALES (see top of file) rather than
+  // implementing English phrase-building inline -- keeps every language's
+  // sentence grammar self-contained instead of forcing them through one
+  // template.
   _spokenTime(h24, m) {
-    let h12 = h24 % 12;
-    if (h12 === 0) h12 = 12;
-    let nextH12 = (h24 + 1) % 12;
-    if (nextH12 === 0) nextH12 = 12;
-    const hourWord = this._numberWord(h12);
-    const nextHourWord = this._numberWord(nextH12);
-    const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
-
-    if (m === 0) return cap(`exactly ${hourWord} o'clock`);
-    if (m === 15) return cap(`quarter past ${hourWord}`);
-    if (m === 30) return cap(`half past ${hourWord}`);
-    if (m === 45) return cap(`quarter to ${nextHourWord}`);
-    if (m < 30) {
-      return cap(`${this._numberWord(m)} minute${m === 1 ? '' : 's'} past ${hourWord}`);
-    }
-    const rem = 60 - m;
-    return cap(`${this._numberWord(rem)} minute${rem === 1 ? '' : 's'} to ${nextHourWord}`);
+    return _resolveSpokenTimeLocale(this._effectiveLanguage()).spokenTime(h24, m);
   }
 
   _renderBars() {
@@ -1788,6 +1823,7 @@ class BroadcastClockCardEditor extends HTMLElement {
       show_date: true,
       date_format: 'long',
       date_font: 'default',
+      language: '',
       time_sync_entity: '',
       show_case: true,
       ring_color_mode: 'rainbow',
@@ -2058,6 +2094,10 @@ class BroadcastClockCardEditor extends HTMLElement {
 
       <div class="bce-section-title">${this._t('section.date_spoken')}</div>
       <div class="bce-row">
+        <label>${this._t('label.language')}</label>
+        <input type="text" id="bce-language" placeholder="${this._t('placeholder.language')}" value="${c.language || ''}">
+      </div>
+      <div class="bce-row">
         <label>${this._t('label.show_date')}</label>
         <input type="checkbox" id="bce-showdate" ${c.show_date !== false ? 'checked' : ''}>
       </div>
@@ -2256,6 +2296,13 @@ class BroadcastClockCardEditor extends HTMLElement {
     if (timeFormatSelect) {
       timeFormatSelect.addEventListener('change', (e) => {
         this._config.time_format = e.target.value;
+        this._emitChange();
+      });
+    }
+    const languageInput = this._wrap.querySelector('#bce-language');
+    if (languageInput) {
+      languageInput.addEventListener('change', (e) => {
+        this._config.language = e.target.value.trim();
         this._emitChange();
       });
     }
