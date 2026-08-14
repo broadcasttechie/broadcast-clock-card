@@ -1325,13 +1325,22 @@ class BroadcastClockCard extends HTMLElement {
   _tickDotsRing(s) {
     if (!this._dots) return;
     const offOpacity = this._ledOffStyle === 'blank' ? '0' : '0.28';
+    // Lit-dot count = seconds elapsed since the top of the minute -- s=0
+    // (a fresh minute just starting) wraps to a full 60 rather than 0, so
+    // the ring never goes fully dark; it reads as "60 seconds just
+    // completed", not "nothing has happened yet". The emphasized dot is
+    // always the most-recently-lit one (litCount - 1), not index s itself
+    // -- at s=1 only one dot (index 0) is lit at all, so s would point past
+    // the end of the lit range.
+    const litCount = s === 0 ? 60 : s;
+    const emphasizedIndex = litCount - 1;
     for (let i = 0; i < 60; i++) {
       const { group, circle } = this._dots[i];
       const color = this._dotColorForIndex(i);
       circle.setAttribute('fill', color);
       circle.style.color = color;
-      if (i <= s) {
-        const isCurrent = i === s && this._emphasizeCurrentSecond;
+      if (i < litCount) {
+        const isCurrent = i === emphasizedIndex && this._emphasizeCurrentSecond;
         circle.setAttribute('r', isCurrent ? '7.5' : '5');
         group.setAttribute('opacity', '1');
       } else {
