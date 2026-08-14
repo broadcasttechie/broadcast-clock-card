@@ -20,7 +20,7 @@ const CLOCK_TYPES = ['master_clock', 'led_ring', 'text'];
 const LED_STYLES = ['glowing', 'flat'];
 const LED_OFF_STYLES = ['dull', 'blank'];
 const TEXT_FONTS = ['segment', 'normal'];
-const SECONDS_PLACEMENTS = ['inline', 'newline'];
+const SECONDS_PLACEMENTS = ['inline', 'newline', 'newline_large'];
 const TIME_FORMATS = ['24h', '12h'];
 const DATE_FORMATS = ['long', 'long_year', 'short', 'numeric'];
 const DATE_FONTS = ['default', 'mono'];
@@ -746,7 +746,7 @@ class BroadcastClockCard extends HTMLElement {
     this._hhmmEl = null;
     this._ssEl = null;
 
-    const newlineSeconds = this._showSeconds && this._secondsPlacement === 'newline';
+    const newlineSeconds = this._showSeconds && this._secondsPlacement !== 'inline';
 
     if (this._textFont === 'segment') {
       this._buildSegmentTextStyle(newlineSeconds);
@@ -1004,12 +1004,20 @@ class BroadcastClockCard extends HTMLElement {
     }
   }
 
+  // 'newline' shrinks the seconds row to half the primary row's size;
+  // 'newline_large' keeps it full-size instead -- everywhere the seconds
+  // row's relative size matters (segment font row2, normal font .bc-ss)
+  // reads this same ratio.
+  _secondsRowRatio() {
+    return this._secondsPlacement === 'newline_large' ? 1 : 0.5;
+  }
+
   _applySizeTextStyle(baseUnit, maxWidthPx, maxHeightPx) {
     if (this._textFont === 'segment') {
       this._applySizeSegment(baseUnit, maxWidthPx, maxHeightPx);
     } else {
       if (this._hhmmEl) this._hhmmEl.style.fontSize = `${baseUnit}px`;
-      if (this._ssEl) this._ssEl.style.fontSize = `${baseUnit * 0.5}px`;
+      if (this._ssEl) this._ssEl.style.fontSize = `${baseUnit * this._secondsRowRatio()}px`;
       if (this._textTimeEl) this._textTimeEl.style.fontSize = `${baseUnit * 2.0}px`;
     }
   }
@@ -1033,10 +1041,17 @@ class BroadcastClockCard extends HTMLElement {
     const row1 = this._textStyleScreen.querySelector('.bc-digitalled-row-primary');
     if (!row1) return;
     const row2 = this._textStyleScreen.querySelector('.bc-digitalled-row-seconds');
+    const secRatio = this._secondsRowRatio();
     const gapRatio = 0.12;
     const widestUnits = Math.max(this._rowUnits(row1), row2 ? this._rowUnits(row2) : 0);
-    const desiredH = baseUnit * (row2 ? 1.3 : 2.2);
-    const digitH = Math.max(16, Math.min(desiredH, maxWidthPx / widestUnits, maxHeightPx * (row2 ? 0.55 : 0.7)));
+    // Height-budget constants tuned per case: no row2 (single row, same as
+    // before); row2 at half-size ('newline', same constants as before this
+    // option existed); row2 at full-size ('newline_large' -- the stack is
+    // taller, so both the target height and the height ceiling shrink to
+    // leave room for two full-size rows instead of one-and-a-half).
+    const desiredH = baseUnit * (!row2 ? 2.2 : (secRatio === 0.5 ? 1.3 : 1.1));
+    const maxHByHeight = !row2 ? maxHeightPx * 0.7 : maxHeightPx * (secRatio === 0.5 ? 0.55 : 0.42);
+    const digitH = Math.max(16, Math.min(desiredH, maxWidthPx / widestUnits, maxHByHeight));
     const gapPx = digitH * gapRatio;
 
     const digitWRatio = 0.56, colonWRatio = 0.22;
@@ -1051,7 +1066,7 @@ class BroadcastClockCard extends HTMLElement {
     };
     applyRow(row1, digitH);
     if (row2) {
-      applyRow(row2, digitH * 0.5);
+      applyRow(row2, digitH * secRatio);
       row1.style.marginBottom = `${digitH * 0.15}px`;
     }
   }
@@ -1509,7 +1524,8 @@ class BroadcastClockCardEditor extends HTMLElement {
       <div class="bce-row">
         <label>Seconds placement</label>
         <select id="bce-secondsplacement">
-          <option value="newline" ${c.seconds_placement !== 'inline' ? 'selected' : ''}>New line (smaller, below)</option>
+          <option value="newline" ${(!c.seconds_placement || c.seconds_placement === 'newline') ? 'selected' : ''}>New line (smaller, below)</option>
+          <option value="newline_large" ${c.seconds_placement === 'newline_large' ? 'selected' : ''}>New line (larger, below)</option>
           <option value="inline" ${c.seconds_placement === 'inline' ? 'selected' : ''}>Inline (same line)</option>
         </select>
       </div>
