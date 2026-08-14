@@ -163,3 +163,9 @@ bars:
 ## Notes
 
 - `time_sync_entity`, the smooth second hand, and the visibility/periodic resync (re-anchors the clock immediately when a hidden view/tab becomes visible again, plus a 60s backstop) all derive from the same corrected time source, so the whole card stays in sync with real time regardless of which display options are active.
+
+## Localization
+
+The visual editor follows your Home Assistant profile's language (`hass.language`), falling back to the base language (e.g. `fr` for `fr-CA`) and then English if a locale isn't translated yet. English is the only translation shipped so far — contributions adding another language to the `CARD_TRANSLATIONS` object in `broadcast-clock-card.js` are welcome.
+
+The date line already follows your HA language automatically (via `Intl`/`toLocaleDateString`), no translation needed there. The spoken-time line ("Quarter past six") is English-only for now — it's phrase grammar, not a dictionary swap, so it needs real per-language logic rather than translated strings.

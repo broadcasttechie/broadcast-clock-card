@@ -26,6 +26,138 @@ const TIME_FORMATS = ['24h', '12h'];
 const DATE_FORMATS = ['long', 'long_year', 'short', 'numeric'];
 const DATE_FONTS = ['default', 'mono'];
 
+// Editor-UI strings only -- the card's own rendered output (spoken time,
+// bar labels) isn't covered here; spoken time in particular needs its own
+// per-language phrase-building logic, not a dictionary swap, and is left
+// English-only for now. English is the only populated locale so far;
+// add more by dropping in another top-level language-code key with the
+// same shape -- translate() falls back language -> base language -> 'en'
+// -> the raw key itself, so a partially-translated locale never breaks.
+const CARD_TRANSLATIONS = {
+  en: {
+    section: {
+      panel_layout: 'Panel layout',
+      clock: 'Clock',
+      date_spoken: 'Date & spoken time',
+      status_bars: 'Status bars'
+    },
+    label: {
+      layout: 'Layout',
+      clock_type: 'Clock type',
+      clock_size: 'Clock size (% of card height)',
+      text_size: 'Text size (%)',
+      glow_intensity: 'Glow intensity (%)',
+      show_case: 'Show case housing',
+      text_colour: 'Text colour',
+      second_hand_style: 'Second hand style',
+      second_hand_bounce: 'Second hand bounce (deg)',
+      tick_travel_time: 'Tick travel time',
+      ring_colour: 'Ring colour',
+      led_style: 'LED style',
+      emphasize_current_second: 'Emphasize current second',
+      led_off_style: 'LED off style',
+      countdown_mode: 'Countdown mode',
+      font: 'Font',
+      segment_style: 'Segment style',
+      show_seconds: 'Show seconds',
+      seconds_placement: 'Seconds placement',
+      time_format: 'Time format',
+      show_date: 'Show date line',
+      date_format: 'Date format',
+      date_font: 'Date font',
+      time_sync_entity: 'Time sync entity',
+      show_spoken_time: 'Show spoken time line',
+      bar_off_colour: 'Bar off colour',
+      off_brightness: 'Off brightness (%)',
+      bar_label: 'Label',
+      bar_type: 'Bar type',
+      entity_optional: 'Entity (optional)',
+      attribute_optional: 'Attribute (optional)',
+      color: 'Color',
+      on_values: '"On" values (optional)',
+      default_colour: 'Default colour'
+    },
+    option: {
+      layout_clock_bars: 'Clock + status bars',
+      layout_bars_clock: 'Status bars + clock',
+      layout_clock_only: 'Clock only',
+      layout_bars_only: 'Status bars only',
+      layout_stacked: 'Stacked (clock above bars)',
+      clock_type_master_clock: 'Master Clock (studio analog clock)',
+      clock_type_led_ring: 'LED Ring (60-dot second ring + readout)',
+      clock_type_text: 'Text (readout only, no ring)',
+      second_hand_tick: 'Ticking',
+      second_hand_smooth: 'Smooth sweep',
+      tick_travel_short: 'Short',
+      tick_travel_medium: 'Medium',
+      tick_travel_long: 'Long (slower)',
+      ring_mode_rainbow: 'Rainbow',
+      ring_mode_sunset: 'Sunset',
+      ring_mode_ocean: 'Ocean',
+      ring_mode_neon: 'Neon',
+      ring_mode_solid: 'Solid colour',
+      ring_mode_match_text: 'Match text colour',
+      led_style_flat: 'Flat dot',
+      led_style_glowing: 'Glowing LED',
+      led_style_bulb: 'Glowing LED bulb (with highlight)',
+      led_off_dull: 'Dull (dim, still visible)',
+      led_off_blank: 'Blank (invisible until lit)',
+      font_segment: 'Segment LED',
+      font_normal: 'Normal text',
+      segment_style_flat: 'Flat (soft outline)',
+      segment_style_glowing: 'Glowing (bright tube, matches LED bulb)',
+      seconds_newline: 'New line (smaller, below)',
+      seconds_newline_large: 'New line (larger, below)',
+      seconds_inline: 'Inline (same line)',
+      time_format_24h: '24-hour',
+      time_format_12h: '12-hour (AM/PM)',
+      date_font_default: 'Default',
+      date_font_mono: 'Monospace',
+      bar_off_neutral: 'Neutral dark',
+      bar_off_tinted: 'Darker shade of on-colour',
+      bar_type_single: 'Single colour',
+      bar_type_multi: 'Multi-state (value → colour)'
+    },
+    button: {
+      add_status_bar: '+ Add status bar',
+      remove: 'Remove',
+      add_value_mapping: '+ Add value mapping'
+    },
+    placeholder: {
+      attribute: "blank = use entity's state",
+      on_values: 'blank = on/true/home/open, e.g. active,42',
+      value_mapping: 'value, e.g. home'
+    },
+    misc: {
+      bar_n: 'Bar {n}',
+      value_colour_mappings: 'Value → colour mappings'
+    }
+  }
+};
+
+function _localeFallbackChain(lang) {
+  const chain = [];
+  if (lang) {
+    chain.push(lang);
+    if (lang.includes('-')) chain.push(lang.split('-')[0]);
+  }
+  if (!chain.includes('en')) chain.push('en');
+  return chain;
+}
+
+// path is a dot-separated lookup into CARD_TRANSLATIONS, e.g. 'label.layout'.
+// Falls back language -> base language -> 'en' -> the raw path itself, so a
+// missing key never breaks rendering, just shows something legible-ish.
+function translate(lang, path) {
+  for (const l of _localeFallbackChain(lang)) {
+    const dict = CARD_TRANSLATIONS[l];
+    if (!dict) continue;
+    const value = path.split('.').reduce((o, k) => (o && o[k] !== undefined ? o[k] : undefined), dict);
+    if (value !== undefined) return value;
+  }
+  return path;
+}
+
 // Legacy configs (saved before this settings hierarchy existed) used a flat
 // `clock_style` with 6 values instead of today's `clock_type` + sub-options.
 // Used only as a fallback in setConfig when the new `clock_type` key is
@@ -1346,15 +1478,20 @@ class BroadcastClockCard extends HTMLElement {
   }
 
   _formatDate(now) {
+    // Explicit hass.language rather than the browser/OS locale (the
+    // `undefined` default) -- these can differ (e.g. a shared wall tablet
+    // left in English while the HA user profile is set to German), and the
+    // date should follow the HA-configured language, not the device's.
+    const lang = this._hass && this._hass.language;
     switch (this._dateFormat) {
       case 'long_year':
-        return now.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+        return now.toLocaleDateString(lang, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
       case 'short':
-        return now.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+        return now.toLocaleDateString(lang, { day: 'numeric', month: 'short', year: 'numeric' });
       case 'numeric':
-        return now.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit', year: 'numeric' });
+        return now.toLocaleDateString(lang, { day: '2-digit', month: '2-digit', year: 'numeric' });
       default: // 'long'
-        return now.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+        return now.toLocaleDateString(lang, { weekday: 'long', day: 'numeric', month: 'long' });
     }
   }
 
@@ -1697,6 +1834,14 @@ class BroadcastClockCardEditor extends HTMLElement {
     }));
   }
 
+  _t(path, vars) {
+    let s = translate(this._hass && this._hass.language, path);
+    if (vars) {
+      for (const k in vars) s = s.replace(`{${k}}`, vars[k]);
+    }
+    return s;
+  }
+
   _render() {
     if (!this._built) {
       this._built = true;
@@ -1749,70 +1894,81 @@ class BroadcastClockCardEditor extends HTMLElement {
     // visible, or bar options when only the clock is visible.
     const showClockSettings = c.layout !== 'bars_only';
     const showBarSettings = c.layout !== 'clock_only';
+    // Computed from "today" in the user's HA-configured language, rather
+    // than a hardcoded English example string, so the date_format dropdown
+    // previews look right regardless of locale (and never go stale).
+    const previewDate = new Date();
+    const previewLang = this._hass && this._hass.language;
+    const datePreview = {
+      long: previewDate.toLocaleDateString(previewLang, { weekday: 'long', day: 'numeric', month: 'long' }),
+      long_year: previewDate.toLocaleDateString(previewLang, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
+      short: previewDate.toLocaleDateString(previewLang, { day: 'numeric', month: 'short', year: 'numeric' }),
+      numeric: previewDate.toLocaleDateString(previewLang, { day: '2-digit', month: '2-digit', year: 'numeric' })
+    };
 
     this._wrap.innerHTML = `
-      <div class="bce-section-title">Panel layout</div>
+      <div class="bce-section-title">${this._t('section.panel_layout')}</div>
       <div class="bce-row">
-        <label>Layout</label>
+        <label>${this._t('label.layout')}</label>
         <select id="bce-layout">
-          <option value="clock_bars" ${c.layout === 'clock_bars' ? 'selected' : ''}>Clock + status bars</option>
-          <option value="bars_clock" ${c.layout === 'bars_clock' ? 'selected' : ''}>Status bars + clock</option>
-          <option value="clock_only" ${c.layout === 'clock_only' ? 'selected' : ''}>Clock only</option>
-          <option value="bars_only" ${c.layout === 'bars_only' ? 'selected' : ''}>Status bars only</option>
-          <option value="stacked" ${c.layout === 'stacked' ? 'selected' : ''}>Stacked (clock above bars)</option>
+          <option value="clock_bars" ${c.layout === 'clock_bars' ? 'selected' : ''}>${this._t('option.layout_clock_bars')}</option>
+          <option value="bars_clock" ${c.layout === 'bars_clock' ? 'selected' : ''}>${this._t('option.layout_bars_clock')}</option>
+          <option value="clock_only" ${c.layout === 'clock_only' ? 'selected' : ''}>${this._t('option.layout_clock_only')}</option>
+          <option value="bars_only" ${c.layout === 'bars_only' ? 'selected' : ''}>${this._t('option.layout_bars_only')}</option>
+          <option value="stacked" ${c.layout === 'stacked' ? 'selected' : ''}>${this._t('option.layout_stacked')}</option>
         </select>
       </div>
 
       ${showClockSettings ? `
-      <div class="bce-section-title">Clock</div>
+      <div class="bce-section-title">${this._t('section.clock')}</div>
       <div class="bce-row">
-        <label>Clock type</label>
+        <label>${this._t('label.clock_type')}</label>
         <select id="bce-clocktype">
-          <option value="master_clock" ${isMasterClock ? 'selected' : ''}>Master Clock (studio analog clock)</option>
-          <option value="led_ring" ${isLedRing ? 'selected' : ''}>LED Ring (60-dot second ring + readout)</option>
-          <option value="text" ${isText ? 'selected' : ''}>Text (readout only, no ring)</option>
+          <option value="master_clock" ${isMasterClock ? 'selected' : ''}>${this._t('option.clock_type_master_clock')}</option>
+          <option value="led_ring" ${isLedRing ? 'selected' : ''}>${this._t('option.clock_type_led_ring')}</option>
+          <option value="text" ${isText ? 'selected' : ''}>${this._t('option.clock_type_text')}</option>
         </select>
       </div>
       <div class="bce-row">
-        <label>Clock size (% of card height)</label>
+        <label>${this._t('label.clock_size')}</label>
         <input type="number" id="bce-size" min="10" max="100" value="${c.size_percent}">
       </div>
       <div class="bce-row">
-        <label>Text size (%)</label>
+        <label>${this._t('label.text_size')}</label>
         <input type="number" id="bce-textscale" min="5" max="40" value="${c.text_scale_percent}">
       </div>
       <div class="bce-row">
-        <label>Glow intensity (%)</label>
+        <label>${this._t('label.glow_intensity')}</label>
         <input type="number" id="bce-glow" min="0" max="200" value="${c.text_glow_percent}">
       </div>
       <div class="bce-row">
-        <label>Show case housing</label>
+        <label>${this._t('label.show_case')}</label>
         <input type="checkbox" id="bce-showcase" ${c.show_case !== false ? 'checked' : ''}>
       </div>
       <div class="bce-row">
-        <label>Text colour</label>
+        <label>${this._t('label.text_colour')}</label>
         <input type="color" id="bce-textcolor" value="${c.text_color}">
       </div>
 
       ${isMasterClock ? `
       <div class="bce-row">
-        <label>Second hand style</label>
+        <label>${this._t('label.second_hand_style')}</label>
         <select id="bce-secondhandstyle">
-          <option value="tick" ${c.second_hand_style !== 'smooth' ? 'selected' : ''}>Ticking</option>
-          <option value="smooth" ${c.second_hand_style === 'smooth' ? 'selected' : ''}>Smooth sweep</option>
+          <option value="tick" ${c.second_hand_style !== 'smooth' ? 'selected' : ''}>${this._t('option.second_hand_tick')}</option>
+          <option value="smooth" ${c.second_hand_style === 'smooth' ? 'selected' : ''}>${this._t('option.second_hand_smooth')}</option>
         </select>
       </div>
       ${c.second_hand_style !== 'smooth' ? `
       <div class="bce-row">
-        <label>Second hand bounce (deg)</label>
+        <label>${this._t('label.second_hand_bounce')}</label>
         <input type="number" id="bce-secbounce" min="0" max="8" step="0.5" value="${c.second_hand_bounce_deg ?? 2}">
       </div>
       <div class="bce-row">
-        <label>Tick travel time</label>
+        <label>${this._t('label.tick_travel_time')}</label>
         <select id="bce-ticktraveltime">
-          <option value="short" ${c.tick_travel_time === 'short' ? 'selected' : ''}>Short</option>
-          <option value="medium" ${(!c.tick_travel_time || c.tick_travel_time === 'medium') ? 'selected' : ''}>Medium</option>
-          <option value="long" ${c.tick_travel_time === 'long' ? 'selected' : ''}>Long (slower)</option>
+          <option value="short" ${c.tick_travel_time === 'short' ? 'selected' : ''}>${this._t('option.tick_travel_short')}</option>
+          <option value="medium" ${(!c.tick_travel_time || c.tick_travel_time === 'medium') ? 'selected' : ''}>${this._t('option.tick_travel_medium')}</option>
+          <option value="long" ${c.tick_travel_time === 'long' ? 'selected' : ''}>${this._t('option.tick_travel_long')}</option>
         </select>
       </div>
       ` : ''}
@@ -1820,136 +1976,136 @@ class BroadcastClockCardEditor extends HTMLElement {
 
       ${isLedRing ? `
       <div class="bce-row">
-        <label>Ring colour</label>
+        <label>${this._t('label.ring_colour')}</label>
         <select id="bce-ringmode">
-          <option value="rainbow" ${c.ring_color_mode === 'rainbow' ? 'selected' : ''}>Rainbow</option>
-          <option value="sunset" ${c.ring_color_mode === 'sunset' ? 'selected' : ''}>Sunset</option>
-          <option value="ocean" ${c.ring_color_mode === 'ocean' ? 'selected' : ''}>Ocean</option>
-          <option value="neon" ${c.ring_color_mode === 'neon' ? 'selected' : ''}>Neon</option>
-          <option value="solid" ${c.ring_color_mode === 'solid' ? 'selected' : ''}>Solid colour</option>
-          <option value="match_text" ${c.ring_color_mode === 'match_text' ? 'selected' : ''}>Match text colour</option>
+          <option value="rainbow" ${c.ring_color_mode === 'rainbow' ? 'selected' : ''}>${this._t('option.ring_mode_rainbow')}</option>
+          <option value="sunset" ${c.ring_color_mode === 'sunset' ? 'selected' : ''}>${this._t('option.ring_mode_sunset')}</option>
+          <option value="ocean" ${c.ring_color_mode === 'ocean' ? 'selected' : ''}>${this._t('option.ring_mode_ocean')}</option>
+          <option value="neon" ${c.ring_color_mode === 'neon' ? 'selected' : ''}>${this._t('option.ring_mode_neon')}</option>
+          <option value="solid" ${c.ring_color_mode === 'solid' ? 'selected' : ''}>${this._t('option.ring_mode_solid')}</option>
+          <option value="match_text" ${c.ring_color_mode === 'match_text' ? 'selected' : ''}>${this._t('option.ring_mode_match_text')}</option>
         </select>
       </div>
       ${c.ring_color_mode === 'solid' ? `
       <div class="bce-row">
-        <label>Ring colour</label>
+        <label>${this._t('label.ring_colour')}</label>
         <input type="color" id="bce-ringcolor" value="${c.ring_color}">
       </div>` : ''}
       <div class="bce-row">
-        <label>LED style</label>
+        <label>${this._t('label.led_style')}</label>
         <select id="bce-ledstyle">
-          <option value="flat" ${c.led_style === 'flat' ? 'selected' : ''}>Flat dot</option>
-          <option value="glowing" ${(!c.led_style || c.led_style === 'glowing') ? 'selected' : ''}>Glowing LED</option>
-          <option value="bulb" ${c.led_style === 'bulb' ? 'selected' : ''}>Glowing LED bulb (with highlight)</option>
+          <option value="flat" ${c.led_style === 'flat' ? 'selected' : ''}>${this._t('option.led_style_flat')}</option>
+          <option value="glowing" ${(!c.led_style || c.led_style === 'glowing') ? 'selected' : ''}>${this._t('option.led_style_glowing')}</option>
+          <option value="bulb" ${c.led_style === 'bulb' ? 'selected' : ''}>${this._t('option.led_style_bulb')}</option>
         </select>
       </div>
       <div class="bce-row">
-        <label>Emphasize current second</label>
+        <label>${this._t('label.emphasize_current_second')}</label>
         <input type="checkbox" id="bce-emphasizesecond" ${c.emphasize_current_second !== false ? 'checked' : ''}>
       </div>
       <div class="bce-row">
-        <label>LED off style</label>
+        <label>${this._t('label.led_off_style')}</label>
         <select id="bce-ledoffstyle">
-          <option value="dull" ${c.led_off_style !== 'blank' ? 'selected' : ''}>Dull (dim, still visible)</option>
-          <option value="blank" ${c.led_off_style === 'blank' ? 'selected' : ''}>Blank (invisible until lit)</option>
+          <option value="dull" ${c.led_off_style !== 'blank' ? 'selected' : ''}>${this._t('option.led_off_dull')}</option>
+          <option value="blank" ${c.led_off_style === 'blank' ? 'selected' : ''}>${this._t('option.led_off_blank')}</option>
         </select>
       </div>
       <div class="bce-row">
-        <label>Countdown mode</label>
+        <label>${this._t('label.countdown_mode')}</label>
         <input type="checkbox" id="bce-ringcountdown" ${c.ring_countdown === true ? 'checked' : ''}>
       </div>
       ` : ''}
 
       ${hasTextStyle ? `
       <div class="bce-row">
-        <label>Font</label>
+        <label>${this._t('label.font')}</label>
         <select id="bce-textfont">
-          <option value="segment" ${c.text_font === 'segment' ? 'selected' : ''}>Segment LED</option>
-          <option value="normal" ${c.text_font !== 'segment' ? 'selected' : ''}>Normal text</option>
+          <option value="segment" ${c.text_font === 'segment' ? 'selected' : ''}>${this._t('option.font_segment')}</option>
+          <option value="normal" ${c.text_font !== 'segment' ? 'selected' : ''}>${this._t('option.font_normal')}</option>
         </select>
       </div>
       ${c.text_font === 'segment' ? `
       <div class="bce-row">
-        <label>Segment style</label>
+        <label>${this._t('label.segment_style')}</label>
         <select id="bce-segmentstyle">
-          <option value="flat" ${c.segment_style !== 'glowing' ? 'selected' : ''}>Flat (soft outline)</option>
-          <option value="glowing" ${c.segment_style === 'glowing' ? 'selected' : ''}>Glowing (bright tube, matches LED bulb)</option>
+          <option value="flat" ${c.segment_style !== 'glowing' ? 'selected' : ''}>${this._t('option.segment_style_flat')}</option>
+          <option value="glowing" ${c.segment_style === 'glowing' ? 'selected' : ''}>${this._t('option.segment_style_glowing')}</option>
         </select>
       </div>
       ` : ''}
       <div class="bce-row">
-        <label>Show seconds</label>
+        <label>${this._t('label.show_seconds')}</label>
         <input type="checkbox" id="bce-showseconds" ${c.show_seconds !== false ? 'checked' : ''}>
       </div>
       ${c.show_seconds !== false ? `
       <div class="bce-row">
-        <label>Seconds placement</label>
+        <label>${this._t('label.seconds_placement')}</label>
         <select id="bce-secondsplacement">
-          <option value="newline" ${(!c.seconds_placement || c.seconds_placement === 'newline') ? 'selected' : ''}>New line (smaller, below)</option>
-          <option value="newline_large" ${c.seconds_placement === 'newline_large' ? 'selected' : ''}>New line (larger, below)</option>
-          <option value="inline" ${c.seconds_placement === 'inline' ? 'selected' : ''}>Inline (same line)</option>
+          <option value="newline" ${(!c.seconds_placement || c.seconds_placement === 'newline') ? 'selected' : ''}>${this._t('option.seconds_newline')}</option>
+          <option value="newline_large" ${c.seconds_placement === 'newline_large' ? 'selected' : ''}>${this._t('option.seconds_newline_large')}</option>
+          <option value="inline" ${c.seconds_placement === 'inline' ? 'selected' : ''}>${this._t('option.seconds_inline')}</option>
         </select>
       </div>
       ` : ''}
       <div class="bce-row">
-        <label>Time format</label>
+        <label>${this._t('label.time_format')}</label>
         <select id="bce-timeformat">
-          <option value="24h" ${c.time_format !== '12h' ? 'selected' : ''}>24-hour</option>
-          <option value="12h" ${c.time_format === '12h' ? 'selected' : ''}>12-hour (AM/PM)</option>
+          <option value="24h" ${c.time_format !== '12h' ? 'selected' : ''}>${this._t('option.time_format_24h')}</option>
+          <option value="12h" ${c.time_format === '12h' ? 'selected' : ''}>${this._t('option.time_format_12h')}</option>
         </select>
       </div>
       ` : ''}
 
-      <div class="bce-section-title">Date &amp; spoken time</div>
+      <div class="bce-section-title">${this._t('section.date_spoken')}</div>
       <div class="bce-row">
-        <label>Show date line</label>
+        <label>${this._t('label.show_date')}</label>
         <input type="checkbox" id="bce-showdate" ${c.show_date !== false ? 'checked' : ''}>
       </div>
       ${c.show_date !== false ? `
       <div class="bce-row">
-        <label>Date format</label>
+        <label>${this._t('label.date_format')}</label>
         <select id="bce-dateformat">
-          <option value="long" ${(!c.date_format || c.date_format === 'long') ? 'selected' : ''}>Friday, 14 August</option>
-          <option value="long_year" ${c.date_format === 'long_year' ? 'selected' : ''}>Friday, 14 August 2026</option>
-          <option value="short" ${c.date_format === 'short' ? 'selected' : ''}>14 Aug 2026</option>
-          <option value="numeric" ${c.date_format === 'numeric' ? 'selected' : ''}>14/08/2026</option>
+          <option value="long" ${(!c.date_format || c.date_format === 'long') ? 'selected' : ''}>${datePreview.long}</option>
+          <option value="long_year" ${c.date_format === 'long_year' ? 'selected' : ''}>${datePreview.long_year}</option>
+          <option value="short" ${c.date_format === 'short' ? 'selected' : ''}>${datePreview.short}</option>
+          <option value="numeric" ${c.date_format === 'numeric' ? 'selected' : ''}>${datePreview.numeric}</option>
         </select>
       </div>
       <div class="bce-row">
-        <label>Date font</label>
+        <label>${this._t('label.date_font')}</label>
         <select id="bce-datefont">
-          <option value="default" ${c.date_font !== 'mono' ? 'selected' : ''}>Default</option>
-          <option value="mono" ${c.date_font === 'mono' ? 'selected' : ''}>Monospace</option>
+          <option value="default" ${c.date_font !== 'mono' ? 'selected' : ''}>${this._t('option.date_font_default')}</option>
+          <option value="mono" ${c.date_font === 'mono' ? 'selected' : ''}>${this._t('option.date_font_mono')}</option>
         </select>
       </div>
       ` : ''}
       <div class="bce-row">
-        <label>Time sync entity</label>
+        <label>${this._t('label.time_sync_entity')}</label>
         <ha-entity-picker id="bce-timesync" allow-custom-entity></ha-entity-picker>
       </div>
       <div class="bce-row">
-        <label>Show spoken time line</label>
+        <label>${this._t('label.show_spoken_time')}</label>
         <input type="checkbox" id="bce-showspoken" ${c.show_spoken_time ? 'checked' : ''}>
       </div>
       ` : ''}
 
       ${showBarSettings ? `
-      <div class="bce-section-title">Status bars</div>
+      <div class="bce-section-title">${this._t('section.status_bars')}</div>
       <div class="bce-row">
-        <label>Bar off colour</label>
+        <label>${this._t('label.bar_off_colour')}</label>
         <select id="bce-baroffstyle">
-          <option value="neutral" ${c.bar_off_style !== 'tinted' ? 'selected' : ''}>Neutral dark</option>
-          <option value="tinted" ${c.bar_off_style === 'tinted' ? 'selected' : ''}>Darker shade of on-colour</option>
+          <option value="neutral" ${c.bar_off_style !== 'tinted' ? 'selected' : ''}>${this._t('option.bar_off_neutral')}</option>
+          <option value="tinted" ${c.bar_off_style === 'tinted' ? 'selected' : ''}>${this._t('option.bar_off_tinted')}</option>
         </select>
       </div>
       ${c.bar_off_style === 'tinted' ? `
       <div class="bce-row">
-        <label>Off brightness (%)</label>
+        <label>${this._t('label.off_brightness')}</label>
         <input type="number" id="bce-baroffbrightness" min="5" max="40" step="1" value="${c.bar_off_brightness ?? 15}">
       </div>
       ` : ''}
       <div id="bce-bars"></div>
-      <button class="bce-add-btn" id="bce-add-bar" type="button">+ Add status bar</button>
+      <button class="bce-add-btn" id="bce-add-bar" type="button">${this._t('button.add_status_bar')}</button>
       ` : ''}
     `;
 
@@ -2173,45 +2329,45 @@ class BroadcastClockCardEditor extends HTMLElement {
       block.className = 'bce-bar-block';
       block.innerHTML = `
         <div class="bce-bar-header">
-          <strong>Bar ${idx + 1}</strong>
-          <button class="bce-remove-btn" type="button">Remove</button>
+          <strong>${this._t('misc.bar_n', { n: idx + 1 })}</strong>
+          <button class="bce-remove-btn" type="button">${this._t('button.remove')}</button>
         </div>
         <div class="bce-row">
-          <label>Label</label>
+          <label>${this._t('label.bar_label')}</label>
           <input type="text" data-field="label" value="${bar.label || ''}">
         </div>
         <div class="bce-row">
-          <label>Bar type</label>
+          <label>${this._t('label.bar_type')}</label>
           <select class="bce-bartype">
-            <option value="single" ${!isMulti ? 'selected' : ''}>Single colour</option>
-            <option value="multi" ${isMulti ? 'selected' : ''}>Multi-state (value &rarr; colour)</option>
+            <option value="single" ${!isMulti ? 'selected' : ''}>${this._t('option.bar_type_single')}</option>
+            <option value="multi" ${isMulti ? 'selected' : ''}>${this._t('option.bar_type_multi')}</option>
           </select>
         </div>
         <div class="bce-row">
-          <label>Entity (optional)</label>
+          <label>${this._t('label.entity_optional')}</label>
           <ha-entity-picker data-field="entity" allow-custom-entity></ha-entity-picker>
         </div>
         <div class="bce-row">
-          <label>Attribute (optional)</label>
-          <input type="text" data-field="attribute" placeholder="blank = use entity's state" value="${bar.attribute || ''}">
+          <label>${this._t('label.attribute_optional')}</label>
+          <input type="text" data-field="attribute" placeholder="${this._t('placeholder.attribute')}" value="${bar.attribute || ''}">
         </div>
         ${!isMulti ? `
         <div class="bce-row">
-          <label>Color</label>
+          <label>${this._t('label.color')}</label>
           <input type="color" data-field="color" value="${bar.color || '#ffffff'}">
         </div>
         <div class="bce-row">
-          <label>"On" values (optional)</label>
-          <input type="text" data-field="on_values" placeholder="blank = on/true/home/open, e.g. active,42" value="${bar.on_values || ''}">
+          <label>${this._t('label.on_values')}</label>
+          <input type="text" data-field="on_values" placeholder="${this._t('placeholder.on_values')}" value="${bar.on_values || ''}">
         </div>
         ` : `
         <div class="bce-row">
-          <label>Default colour</label>
+          <label>${this._t('label.default_colour')}</label>
           <input type="color" class="bce-defaultcolor" value="${bar.default_color || '#3a3a3a'}">
         </div>
-        <div class="bce-subsection-title">Value &rarr; colour mappings</div>
+        <div class="bce-subsection-title">${this._t('misc.value_colour_mappings')}</div>
         <div class="bce-valuecolors"></div>
-        <button class="bce-add-btn bce-add-valuecolor" type="button">+ Add value mapping</button>
+        <button class="bce-add-btn bce-add-valuecolor" type="button">${this._t('button.add_value_mapping')}</button>
         `}
       `;
       block.querySelector('.bce-remove-btn').addEventListener('click', () => {
@@ -2237,9 +2393,9 @@ class BroadcastClockCardEditor extends HTMLElement {
           const row = document.createElement('div');
           row.className = 'bce-valuecolor-row';
           row.innerHTML = `
-            <input type="text" class="bce-vc-value" placeholder="value, e.g. home" value="${vc.value || ''}">
+            <input type="text" class="bce-vc-value" placeholder="${this._t('placeholder.value_mapping')}" value="${vc.value || ''}">
             <input type="color" class="bce-vc-color" value="${vc.color || '#ffffff'}">
-            <button class="bce-vc-remove" type="button">&times;</button>
+            <button class="bce-vc-remove" type="button">×</button>
           `;
           const updateValueColor = (patch) => {
             this._config.bars = this._config.bars.map((b, i) => {
