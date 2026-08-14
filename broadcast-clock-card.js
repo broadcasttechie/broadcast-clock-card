@@ -618,11 +618,17 @@ class BroadcastClockCard extends HTMLElement {
       }
       .bc-ring-dot-highlight {
         fill: #fff;
-        opacity: 0;
+        /* Kept faintly visible even when off so the "bulb" style still
+           reads as a glassy bulb (unlit) rather than a plain flat dot --
+           only the glow (filter, above) is exclusive to the lit state. */
+        opacity: 0.12;
         pointer-events: none;
       }
       .bc-ring-dot-highlight.bc-ring-dot-lit {
         opacity: 0.5;
+      }
+      .bc-panel-clock[data-led-off-style="blank"] .bc-ring-dot-highlight:not(.bc-ring-dot-lit) {
+        opacity: 0;
       }
       .bc-spoken {
         font-weight: 700;
@@ -803,6 +809,7 @@ class BroadcastClockCard extends HTMLElement {
     const panel = this._clockPanel;
     panel.className = 'bc-panel bc-panel-clock bc-clock-type-' + this._clockType;
     panel.dataset.ledStyle = this._ledStyle;
+    panel.dataset.ledOffStyle = this._ledOffStyle;
     this._dots = null;
     this._prevLitCount = undefined; // new dot elements -- force a full repaint on the next tick
     this._digitalLedDigits = null;
@@ -1107,6 +1114,7 @@ class BroadcastClockCard extends HTMLElement {
       this._dateEl.classList.toggle('bc-date-font-mono', this._dateFont === 'mono');
     }
     if (this._analogWrap) this._analogWrap.classList.toggle('bc-analog-no-case', !this._showCase);
+    if (this._clockPanel) this._clockPanel.dataset.ledOffStyle = this._ledOffStyle;
     this._applySize();
   }
 
