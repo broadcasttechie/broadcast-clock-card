@@ -1,6 +1,6 @@
 # Broadcast Clock Card
 
-A broadcast-studio style on-air clock for Home Assistant Lovelace dashboards — built for radio studio clocks, TV studio and control-room master clocks, podcast/streaming setups, and any desk or wall display that wants a proper clock alongside live status indicators. Choose a Master Clock (studio analog), LED Ring (60-dot second ring with a digital or segment-LED readout), or plain Text display, plus an optional row of configurable status bars — ON AIR lights, recording indicators, streaming/mic-live lights, or any other single-colour or multi-state status synced to a Home Assistant entity.
+A broadcast-studio style on-air clock for Home Assistant Lovelace dashboards — built for radio studio clocks, TV studio and control-room master clocks, podcast/streaming setups, and any desk or wall display that wants a proper clock alongside live status indicators. Choose a Master Clock (studio analog), LED Ring (60-dot second ring with a digital or segment-LED readout), plain Text display, or a running Timecode (SMPTE/LTC-style session timer), plus an optional row of configurable status bars — ON AIR lights, recording indicators, streaming/mic-live lights, or any other single-colour or multi-state status synced to a Home Assistant entity.
 
 ## Use cases
 
@@ -71,6 +71,17 @@ text_font: segment
 time_format: 12h
 ```
 
+```yaml
+# Running session timecode, driven by a recording sensor
+type: custom:broadcast-clock-card
+layout: clock_only
+clock_type: timecode
+text_font: segment
+timecode_trigger: entity
+timecode_source_entity: binary_sensor.recording
+timecode_active_state: "on"
+```
+
 ## Config reference
 
 ### Top level
@@ -78,7 +89,7 @@ time_format: 12h
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `layout` | string | `clock_bars` | Panel arrangement: `clock_bars`, `bars_clock`, `clock_only`, `bars_only`, `stacked` (clock above bars) |
-| `clock_type` | string | `led_ring` | `master_clock`, `led_ring`, or `text` — see below for type-specific options |
+| `clock_type` | string | `led_ring` | `master_clock`, `led_ring`, `text`, or `timecode` — see below for type-specific options |
 | `size_percent` | number | `70` | Clock size as a percentage of the available card height/width, whichever is smaller (10-100) |
 | `text_scale_percent` | number | `16` | Digital/segment text size as a percentage of the clock's own size (5-40) |
 | `text_glow_percent` | number | `100` | Glow intensity (0-200) — drives the LED Ring/Text digit glow and the Master Clock's edge-lit ring glow. Does **not** affect the LED Ring's own dot glow (see `led_style`) |
@@ -127,6 +138,22 @@ A 60-dot second ring wrapping a digital or segment-LED readout (the readout uses
 | `seconds_placement` | string | `newline` | `inline` (same line as HH:MM), `newline` (own line, smaller), or `newline_large` (own line, full size) |
 | `time_format` | string | `24h` | `24h` or `12h`. In `12h` + `segment` font, AM/PM shows as a 2-dot indicator (top lit = AM, bottom lit = PM) rather than text |
 
+### `clock_type: timecode`
+
+A running SMPTE/LTC-style session timer, `HH:MM:SS:FF` (frames), using the same digit rendering as the shared text style (`text_font`/`segment_style`) but always inline, with no seconds-placement or 12/24h options — it's a stopwatch, not a wall clock.
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `timecode_trigger` | string | `manual` | `manual` (tap the digits to start/stop, a Reset button clears to zero) or `entity` (runs automatically while `timecode_source_entity` is in `timecode_active_state`) |
+| `timecode_source_entity` | string | *(none)* | `timecode_trigger: entity` only. Entity to watch — a `binary_sensor`, `input_boolean`, or anything with a state you can match |
+| `timecode_active_state` | string | `on` | `timecode_trigger: entity` only. The state value that means "counting" — elapsed time is computed from that state's `last_changed` timestamp |
+| `timecode_idle_behavior` | string | `reset` | `timecode_trigger: entity` only. What happens when the entity leaves its active state: `reset` (back to `00:00:00:00`) or `freeze` (hold the last value) |
+| `timecode_frame_rate` | number | `25` | `24`, `25`, or `30` fps. **Non-drop-frame only** — see note below |
+
+Manual mode owns its running/elapsed state in the card itself, so it doesn't survive a full page reload mid-count (a fresh load starts back at zero). Entity mode has no such limitation, since elapsed time is always recomputed from the entity's own `last_changed`.
+
+**Drop-frame timecode is not implemented.** Real broadcast drop-frame timecode (skipping frame numbers at the top of most minutes to keep 29.97fps in sync with wall-clock time) is its own per-frame-rate arithmetic — this card does plain non-drop-frame counting, which is the right fit for a production/session timer and doesn't need genlock-grade accuracy.
+
 ### Status bars
 
 Each entry in `bars` is one status bar:
@@ -170,8 +197,7 @@ bars:
 
 ## Notes
 
-- `time_sync_entity`, the smooth second hand, and the visibility/periodic resync (re-anchors the clock immediately when a hidden view/tab becomes visible again, plus a 60s backstop) all derive from the same corrected time source, so the whole card stays in sync with real time regardless of which display options are active.
-- This card shows wall-clock time, not a running production/session timecode. A true broadcast **timecode clock** display (SMPTE/LTC-style `HH:MM:SS:FF`, counting up from a session start rather than time-of-day) is being considered as a future addition — not implemented yet.
+- `time_sync_entity`, the smooth second hand, and the visibility/periodic resync (re-anchors the clock immediately when a hidden view/tab becomes visible again, plus a 60s backstop) all derive from the same corrected time source, so the whole card stays in sync with real time regardless of which display options are active. `clock_type: timecode` is independent of this — it's elapsed time, not wall-clock time, so it isn't affected by `time_sync_entity`.
 
 ## Localization
 

@@ -14,9 +14,9 @@ const RING_PALETTES = {
 
 const LAYOUTS = ['clock_bars', 'bars_clock', 'clock_only', 'bars_only', 'stacked'];
 
-// Top-level clock hierarchy: 3 clock types, each with their own sub-options
+// Top-level clock hierarchy: 4 clock types, each with their own sub-options
 // (see BroadcastClockCard.setConfig for the full field list and defaults).
-const CLOCK_TYPES = ['master_clock', 'led_ring', 'text'];
+const CLOCK_TYPES = ['master_clock', 'led_ring', 'text', 'timecode'];
 const LED_STYLES = ['flat', 'glowing', 'bulb'];
 const LED_OFF_STYLES = ['dull', 'blank'];
 const TEXT_FONTS = ['segment', 'normal'];
@@ -25,6 +25,20 @@ const SECONDS_PLACEMENTS = ['inline', 'newline', 'newline_large'];
 const TIME_FORMATS = ['24h', '12h'];
 const DATE_FORMATS = ['long', 'long_year', 'short', 'numeric'];
 const DATE_FONTS = ['default', 'mono'];
+// 'manual': tap to start/stop, separate reset button -- card owns the
+// running state itself (doesn't survive a page reload mid-count).
+// 'entity': runs while timecode_source_entity is in timecode_active_state,
+// computed from that state's last_changed -- no local state to lose.
+const TIMECODE_TRIGGERS = ['manual', 'entity'];
+// 'entity' trigger only -- what the display does when the entity leaves
+// its active state: hold the last value, or drop back to 00:00:00:00.
+const TIMECODE_IDLE_BEHAVIORS = ['freeze', 'reset'];
+// Non-drop-frame only -- true broadcast drop-frame timecode (skipping
+// frame numbers 00/01 at the top of most minutes to keep 29.97fps in sync
+// with wall-clock time) is real per-frame-rate arithmetic, not implemented.
+// A session/production timer doesn't need DF accuracy the way genlocked
+// broadcast equipment does, so NDF is the right default for this use case.
+const TIMECODE_FRAME_RATES = [24, 25, 30];
 
 // Editor-UI strings only -- the card's own rendered output (spoken time,
 // bar labels) isn't covered here; spoken time in particular needs its own
@@ -76,7 +90,12 @@ const CARD_TRANSLATIONS = {
       attribute_optional: 'Attribute (optional)',
       color: 'Color',
       on_values: '"On" values (optional)',
-      default_colour: 'Default colour'
+      default_colour: 'Default colour',
+      timecode_trigger: 'Timecode trigger',
+      timecode_source_entity: 'Source entity',
+      timecode_active_state: 'Active state',
+      timecode_idle_behavior: 'When entity is inactive',
+      timecode_frame_rate: 'Frame rate'
     },
     option: {
       layout_clock_bars: 'Clock + status bars',
@@ -87,6 +106,14 @@ const CARD_TRANSLATIONS = {
       clock_type_master_clock: 'Master Clock (studio analog clock)',
       clock_type_led_ring: 'LED Ring (60-dot second ring + readout)',
       clock_type_text: 'Text (readout only, no ring)',
+      clock_type_timecode: 'Timecode (SMPTE/LTC-style session timer)',
+      timecode_trigger_manual: 'Manual (tap to start/stop)',
+      timecode_trigger_entity: 'Entity-driven',
+      timecode_idle_freeze: 'Freeze at last value',
+      timecode_idle_reset: 'Reset to zero',
+      timecode_fps_24: '24 fps',
+      timecode_fps_25: '25 fps',
+      timecode_fps_30: '30 fps',
       second_hand_tick: 'Ticking',
       second_hand_smooth: 'Smooth sweep',
       tick_travel_short: 'Short',
@@ -128,7 +155,8 @@ const CARD_TRANSLATIONS = {
       attribute: "blank = use entity's state",
       on_values: 'blank = on/true/home/open, e.g. active,42',
       value_mapping: 'value, e.g. home',
-      language: 'blank = follow Home Assistant language, e.g. de, fr, es'
+      language: 'blank = follow Home Assistant language, e.g. de, fr, es',
+      timecode_active_state: 'e.g. on, recording, playing'
     },
     misc: {
       bar_n: 'Bar {n}',
@@ -387,6 +415,12 @@ class BroadcastClockCard extends HTMLElement {
     this._showSeconds = (this._config.show_seconds ?? legacy.show_seconds) !== false;
     this._secondsPlacement = this._normalizeEnum(this._config.seconds_placement ?? legacy.seconds_placement, SECONDS_PLACEMENTS, 'newline');
     this._timeFormat = this._normalizeEnum(this._config.time_format, TIME_FORMATS, '24h');
+    this._timecodeTrigger = this._normalizeEnum(this._config.timecode_trigger, TIMECODE_TRIGGERS, 'manual');
+    this._timecodeSourceEntity = this._config.timecode_source_entity || '';
+    this._timecodeActiveState = (this._config.timecode_active_state || 'on').trim();
+    this._timecodeIdleBehavior = this._normalizeEnum(this._config.timecode_idle_behavior, TIMECODE_IDLE_BEHAVIORS, 'reset');
+    this._timecodeFrameRate = TIMECODE_FRAME_RATES.includes(Number(this._config.timecode_frame_rate))
+      ? Number(this._config.timecode_frame_rate) : 25;
     // Generic across all 3 clock types (was 'master_clock_case', master-clock
     // only). Priority: new key -> legacy per-style default (false for
     // everything except master_clock) -> old master_clock_case key -> true.
@@ -397,6 +431,7 @@ class BroadcastClockCard extends HTMLElement {
     if (this._builtStyleKey !== styleKey) this._buildClockPanel();
     this._applySecondHandBounce();
     this._syncSmoothSecondHand();
+    this._syncTimecodeRaf();
 
     this._applyColors();
     this._applyRingColors();
@@ -492,6 +527,14 @@ class BroadcastClockCard extends HTMLElement {
       cancelAnimationFrame(this._smoothSecondHandRaf);
       this._smoothSecondHandRaf = null;
     }
+    if (this._timecodeRaf) {
+      cancelAnimationFrame(this._timecodeRaf);
+      this._timecodeRaf = null;
+    }
+    if (this._timecodeIdlePoll) {
+      clearTimeout(this._timecodeIdlePoll);
+      this._timecodeIdlePoll = null;
+    }
     if (this._visibilityHandler) {
       document.removeEventListener('visibilitychange', this._visibilityHandler);
       this._visibilityHandler = null;
@@ -533,6 +576,11 @@ class BroadcastClockCard extends HTMLElement {
       text_color: '#ff3b3b',
       text_font: 'normal',
       segment_style: 'flat',
+      timecode_trigger: 'manual',
+      timecode_source_entity: '',
+      timecode_active_state: 'on',
+      timecode_idle_behavior: 'reset',
+      timecode_frame_rate: 25,
       show_seconds: true,
       seconds_placement: 'newline',
       time_format: '24h',
@@ -651,7 +699,7 @@ class BroadcastClockCard extends HTMLElement {
   _clockStyleKey() {
     return [
       this._clockType, this._textFont, this._showSeconds, this._secondsPlacement,
-      this._timeFormat, this._showCase, this._ledStyle
+      this._timeFormat, this._showCase, this._ledStyle, this._timecodeTrigger
     ].join('|');
   }
 
@@ -843,6 +891,39 @@ class BroadcastClockCard extends HTMLElement {
         white-space: nowrap;
       }
 
+      /* Timecode clock type */
+      .bc-timecode-tappable {
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+        user-select: none;
+      }
+      .bc-timecode-tappable:active {
+        opacity: 0.75;
+      }
+      .bc-timecode-status {
+        margin-top: 1vh;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--bc-text-color, #ff3b3b);
+        opacity: 0.75;
+        text-align: center;
+      }
+      .bc-timecode-reset {
+        margin-top: 1vh;
+        cursor: pointer;
+        border: 1px solid var(--bc-text-color, #ff3b3b);
+        border-radius: 6px;
+        background: none;
+        color: var(--bc-text-color, #ff3b3b);
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      .bc-timecode-reset:active {
+        opacity: 0.6;
+      }
+
       /* Text clock type / LED Ring's embedded readout: segment font */
       .bc-textstyle-housing {
         display: flex;
@@ -1023,6 +1104,24 @@ class BroadcastClockCard extends HTMLElement {
     this._textTimeEl = null;
     this._hhmmEl = null;
     this._ssEl = null;
+    this._timecodeDigits = null;
+    this._timecodeTextEl = null;
+    this._timecodeStatusEl = null;
+    // Manual-mode runtime state -- only initialized the first time (not on
+    // every rebuild), so an in-progress count survives a rebuild triggered
+    // by some other config change (e.g. toggling show_case) while still
+    // in manual mode. Switching trigger mode itself changes _clockStyleKey,
+    // which does force a rebuild -- that's the one case where resetting is
+    // actually correct (the whole control model just changed).
+    if (this._timecodeRunning === undefined) {
+      this._timecodeRunning = false;
+      this._timecodeStartMs = 0;
+      this._timecodeElapsedMs = 0;
+    }
+    // Entity mode's "freeze on idle" needs the last computed value cached
+    // across ticks -- reset whenever we rebuild so a fresh build doesn't
+    // show a stale number left over from a previous entity/trigger mode.
+    this._timecodeLastElapsedMs = 0;
 
     const caseOpen = this._showCase ? '<div class="bc-case-box">' : '';
     const caseClose = this._showCase ? '</div>' : '';
@@ -1059,8 +1158,7 @@ class BroadcastClockCard extends HTMLElement {
       this._textStyleScreen = panel.querySelector('#bc-textstyle-screen');
       this._buildDots();
       this._buildTextStyle();
-    } else {
-      // 'text'
+    } else if (this._clockType === 'text') {
       panel.innerHTML = `
         <div class="bc-textstyle-housing">
           ${caseOpen}<div class="bc-textstyle-screen" id="bc-textstyle-screen"></div>${caseClose}
@@ -1072,6 +1170,130 @@ class BroadcastClockCard extends HTMLElement {
       this._spokenEl = panel.querySelector('#bc-spoken');
       this._textStyleScreen = panel.querySelector('#bc-textstyle-screen');
       this._buildTextStyle();
+    } else {
+      // 'timecode'
+      const isManual = this._timecodeTrigger === 'manual';
+      panel.innerHTML = `
+        <div class="bc-textstyle-housing">
+          ${caseOpen}<div class="bc-textstyle-screen bc-timecode-screen${isManual ? ' bc-timecode-tappable' : ''}" id="bc-textstyle-screen"></div>${caseClose}
+          <div class="bc-timecode-status" id="bc-timecode-status">&nbsp;</div>
+          ${isManual ? '<button class="bc-timecode-reset" id="bc-timecode-reset" type="button">Reset</button>' : ''}
+        </div>
+        <div class="bc-spoken" id="bc-spoken">&nbsp;</div>
+      `;
+      this._spokenEl = panel.querySelector('#bc-spoken');
+      this._textStyleScreen = panel.querySelector('#bc-textstyle-screen');
+      this._timecodeStatusEl = panel.querySelector('#bc-timecode-status');
+      this._buildTimecodeDisplay();
+      if (isManual) {
+        this._textStyleScreen.addEventListener('click', () => this._toggleTimecodeRunning());
+        panel.querySelector('#bc-timecode-reset').addEventListener('click', (e) => {
+          e.stopPropagation();
+          this._resetTimecode();
+        });
+      }
+    }
+  }
+
+  _toggleTimecodeRunning() {
+    const nowMs = Date.now();
+    if (this._timecodeRunning) {
+      this._timecodeElapsedMs += nowMs - this._timecodeStartMs;
+      this._timecodeRunning = false;
+    } else {
+      this._timecodeStartMs = nowMs;
+      this._timecodeRunning = true;
+    }
+    this._syncTimecodeRaf();
+  }
+
+  _resetTimecode() {
+    this._timecodeRunning = false;
+    this._timecodeElapsedMs = 0;
+    this._timecodeStartMs = 0;
+    this._syncTimecodeRaf();
+  }
+
+  _timecodeIsActive() {
+    if (this._timecodeTrigger === 'manual') return this._timecodeRunning;
+    const st = this._hass && this._hass.states[this._timecodeSourceEntity];
+    return !!(st && st.state === this._timecodeActiveState);
+  }
+
+  // Continuous requestAnimationFrame loop while actually counting (frames
+  // need finer-than-1s granularity, so this can't ride the 1Hz
+  // _scheduleNextTick used by every other clock type) -- but only while
+  // active. When idle/frozen the display isn't changing, so repainting it
+  // 60x/second would be pure waste; a single tick plus a 1s fallback poll
+  // (to notice an entity trigger flipping active again -- set hass() alone
+  // doesn't call back into this loop) is enough.
+  _syncTimecodeRaf() {
+    if (this._timecodeRaf) {
+      cancelAnimationFrame(this._timecodeRaf);
+      this._timecodeRaf = null;
+    }
+    if (this._timecodeIdlePoll) {
+      clearTimeout(this._timecodeIdlePoll);
+      this._timecodeIdlePoll = null;
+    }
+    if (this._clockType !== 'timecode') return;
+    const frame = () => {
+      if (this._clockType !== 'timecode') { this._timecodeRaf = null; return; }
+      this._tickTimecode();
+      if (this._timecodeIsActive()) {
+        this._timecodeRaf = requestAnimationFrame(frame);
+      } else {
+        this._timecodeRaf = null;
+        this._timecodeIdlePoll = setTimeout(() => this._syncTimecodeRaf(), 1000);
+      }
+    };
+    this._timecodeRaf = requestAnimationFrame(frame);
+  }
+
+  _tickTimecode() {
+    let elapsedMs;
+    if (this._timecodeTrigger === 'entity') {
+      const st = this._hass && this._hass.states[this._timecodeSourceEntity];
+      const active = st && st.state === this._timecodeActiveState;
+      if (active) {
+        elapsedMs = Date.now() - Date.parse(st.last_changed);
+        if (!Number.isFinite(elapsedMs) || elapsedMs < 0) elapsedMs = 0;
+        this._timecodeLastElapsedMs = elapsedMs;
+      } else {
+        elapsedMs = this._timecodeIdleBehavior === 'freeze' ? this._timecodeLastElapsedMs : 0;
+      }
+      if (this._timecodeStatusEl) {
+        this._timecodeStatusEl.textContent = active ? 'RUNNING' : (this._timecodeIdleBehavior === 'freeze' ? 'STOPPED' : 'IDLE');
+      }
+    } else {
+      elapsedMs = this._timecodeRunning
+        ? this._timecodeElapsedMs + (Date.now() - this._timecodeStartMs)
+        : this._timecodeElapsedMs;
+      if (this._timecodeStatusEl) {
+        this._timecodeStatusEl.textContent = this._timecodeRunning
+          ? 'RUNNING — tap to stop'
+          : (elapsedMs > 0 ? 'STOPPED — tap to resume' : 'TAP TO START');
+      }
+    }
+
+    const frameRate = this._timecodeFrameRate;
+    const totalFrames = Math.max(0, Math.floor((elapsedMs / 1000) * frameRate));
+    const ff = totalFrames % frameRate;
+    const totalSeconds = Math.floor(totalFrames / frameRate);
+    const ss = totalSeconds % 60;
+    const totalMinutes = Math.floor(totalSeconds / 60);
+    const mm = totalMinutes % 60;
+    const hh = Math.floor(totalMinutes / 60) % 24;
+
+    const hhStr = String(hh).padStart(2, '0');
+    const mmStr = String(mm).padStart(2, '0');
+    const ssStr = String(ss).padStart(2, '0');
+    const ffStr = String(ff).padStart(2, '0');
+
+    if (this._textFont === 'segment') {
+      this._setTimecodeDigits(hhStr, mmStr, ssStr, ffStr);
+    } else if (this._timecodeTextEl) {
+      this._timecodeTextEl.textContent = `${hhStr}:${mmStr}:${ssStr}:${ffStr}`;
     }
   }
 
@@ -1079,6 +1301,45 @@ class BroadcastClockCard extends HTMLElement {
   // used by both the 'led_ring' clock type's embedded readout and the
   // standalone 'text' clock type -- driven by text_font/show_seconds/
   // seconds_placement/time_format, identically in both contexts.
+  // HH:MM:SS:FF -- 4 digit-pairs, always inline (frames must stay attached
+  // to seconds), always shown regardless of show_seconds/seconds_placement
+  // (those are for wall-clock display modes, not a session counter).
+  _buildTimecodeDisplay() {
+    this._textStyleScreen.innerHTML = '';
+    this._timecodeDigits = null;
+    this._timecodeTextEl = null;
+
+    if (this._textFont === 'segment') {
+      const row = document.createElement('div');
+      row.className = 'bc-digitalled-digits bc-digitalled-row-primary';
+      this._textStyleScreen.appendChild(row);
+      const h1 = this._makeSegDigit(row), h2 = this._makeSegDigit(row), colon1 = this._makeSegDotPair(row),
+        m1 = this._makeSegDigit(row), m2 = this._makeSegDigit(row), colon2 = this._makeSegDotPair(row),
+        s1 = this._makeSegDigit(row), s2 = this._makeSegDigit(row), colon3 = this._makeSegDotPair(row),
+        f1 = this._makeSegDigit(row), f2 = this._makeSegDigit(row);
+      this._timecodeDigits = { h1, h2, colon1, m1, m2, colon2, s1, s2, colon3, f1, f2 };
+    } else {
+      const wrap = document.createElement('div');
+      wrap.className = 'bc-text-wrap';
+      wrap.innerHTML = `<div class="bc-text-time" id="bc-timecode-text">--:--:--:--</div>`;
+      this._textStyleScreen.appendChild(wrap);
+      this._timecodeTextEl = wrap.querySelector('#bc-timecode-text');
+    }
+  }
+
+  _setTimecodeDigits(hh, mm, ss, ff) {
+    const d = this._timecodeDigits;
+    if (!d) return;
+    this._setDigitalLedDigit(d.h1, hh[0]);
+    this._setDigitalLedDigit(d.h2, hh[1]);
+    this._setDigitalLedDigit(d.m1, mm[0]);
+    this._setDigitalLedDigit(d.m2, mm[1]);
+    this._setDigitalLedDigit(d.s1, ss[0]);
+    this._setDigitalLedDigit(d.s2, ss[1]);
+    this._setDigitalLedDigit(d.f1, ff[0]);
+    this._setDigitalLedDigit(d.f2, ff[1]);
+  }
+
   _buildTextStyle() {
     this._textStyleScreen.innerHTML = '';
     this._digitalLedDigits = null;
@@ -1109,42 +1370,50 @@ class BroadcastClockCard extends HTMLElement {
     }
   }
 
-  _buildSegmentTextStyle(newlineSeconds) {
+  // Shared by _buildSegmentTextStyle (led_ring/text) and
+  // _buildTimecodeDigits (timecode) -- one plain 7-segment digit SVG.
+  _makeSegDigit(row) {
     const NS = 'http://www.w3.org/2000/svg';
-    const makeDigit = (row) => {
-      const svg = document.createElementNS(NS, 'svg');
-      svg.setAttribute('viewBox', `0 0 ${SEG_W} ${SEG_H}`);
-      svg.setAttribute('class', 'bc-digitalled-digit');
-      const segs = {};
-      for (const key of ['a', 'b', 'c', 'd', 'e', 'f', 'g']) {
-        const poly = document.createElementNS(NS, 'polygon');
-        poly.setAttribute('points', SEG_POINTS[key]);
-        poly.setAttribute('class', 'seg');
-        svg.appendChild(poly);
-        segs[key] = poly;
-      }
-      row.appendChild(svg);
-      return { svg, segs };
-    };
-    const makeDotPair = (row, extraClass, cyTop, cyBot) => {
-      // Shape shared by the HH:MM colon, the (optional) MM:SS colon, and the
-      // AM/PM indicator -- all just "two stacked circles", differing only in
-      // vertical spacing (colons stay close together like a colon; AM/PM
-      // spreads to near the top/bottom of the element so it doesn't read as
-      // a second colon), which dot(s) light up, and whether they blink.
-      const svg = document.createElementNS(NS, 'svg');
-      svg.setAttribute('viewBox', '0 0 20 100');
-      svg.setAttribute('class', 'bc-digitalled-colon' + (extraClass ? ' ' + extraClass : ''));
-      const top = document.createElementNS(NS, 'circle');
-      top.setAttribute('cx', '10'); top.setAttribute('cy', String(cyTop ?? 34)); top.setAttribute('r', '7');
-      top.setAttribute('class', 'seg');
-      const bot = document.createElementNS(NS, 'circle');
-      bot.setAttribute('cx', '10'); bot.setAttribute('cy', String(cyBot ?? 66)); bot.setAttribute('r', '7');
-      bot.setAttribute('class', 'seg');
-      svg.appendChild(top); svg.appendChild(bot);
-      row.appendChild(svg);
-      return { svg, dots: [top, bot], top, bot };
-    };
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', `0 0 ${SEG_W} ${SEG_H}`);
+    svg.setAttribute('class', 'bc-digitalled-digit');
+    const segs = {};
+    for (const key of ['a', 'b', 'c', 'd', 'e', 'f', 'g']) {
+      const poly = document.createElementNS(NS, 'polygon');
+      poly.setAttribute('points', SEG_POINTS[key]);
+      poly.setAttribute('class', 'seg');
+      svg.appendChild(poly);
+      segs[key] = poly;
+    }
+    row.appendChild(svg);
+    return { svg, segs };
+  }
+
+  // Shape shared by the HH:MM colon, the (optional) MM:SS colon, the
+  // AM/PM indicator, and the timecode separators -- all just "two stacked
+  // circles", differing only in vertical spacing (colons stay close
+  // together like a colon; AM/PM spreads to near the top/bottom of the
+  // element so it doesn't read as a second colon), which dot(s) light up,
+  // and whether they blink.
+  _makeSegDotPair(row, extraClass, cyTop, cyBot) {
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 20 100');
+    svg.setAttribute('class', 'bc-digitalled-colon' + (extraClass ? ' ' + extraClass : ''));
+    const top = document.createElementNS(NS, 'circle');
+    top.setAttribute('cx', '10'); top.setAttribute('cy', String(cyTop ?? 34)); top.setAttribute('r', '7');
+    top.setAttribute('class', 'seg');
+    const bot = document.createElementNS(NS, 'circle');
+    bot.setAttribute('cx', '10'); bot.setAttribute('cy', String(cyBot ?? 66)); bot.setAttribute('r', '7');
+    bot.setAttribute('class', 'seg');
+    svg.appendChild(top); svg.appendChild(bot);
+    row.appendChild(svg);
+    return { svg, dots: [top, bot], top, bot };
+  }
+
+  _buildSegmentTextStyle(newlineSeconds) {
+    const makeDigit = (row) => this._makeSegDigit(row);
+    const makeDotPair = (row, extraClass, cyTop, cyBot) => this._makeSegDotPair(row, extraClass, cyTop, cyBot);
 
     const row1 = document.createElement('div');
     row1.className = 'bc-digitalled-digits bc-digitalled-row-primary';
@@ -1345,6 +1614,11 @@ class BroadcastClockCard extends HTMLElement {
       // fraction.
       const inner = ringSize * 0.62;
       this._applySizeTextStyle(baseUnit, inner, inner);
+    } else if (this._clockType === 'timecode') {
+      // Slightly less height budget than plain 'text' -- leaves room below
+      // the digits for the status label (+ reset button in manual mode).
+      this._applySizeTextStyle(baseUnit, w * 0.92, h * 0.62);
+      this._applySizeTimecodeControls(baseUnit);
     } else {
       this._applySizeTextStyle(baseUnit, w * 0.92, h * 0.7);
     }
@@ -1374,6 +1648,21 @@ class BroadcastClockCard extends HTMLElement {
       if (this._hhmmEl) this._hhmmEl.style.fontSize = `${baseUnit}px`;
       if (this._ssEl) this._ssEl.style.fontSize = `${baseUnit * this._secondsRowRatio()}px`;
       if (this._textTimeEl) this._textTimeEl.style.fontSize = `${baseUnit * 2.0}px`;
+      // Smaller multiplier than _textTimeEl -- "00:00:00:00" (11 chars) is
+      // longer than "00:00:00" (8 chars), so the same font size would run
+      // wider than the equivalent plain-text clock at the same baseUnit.
+      if (this._timecodeTextEl) this._timecodeTextEl.style.fontSize = `${baseUnit * 1.4}px`;
+    }
+  }
+
+  _applySizeTimecodeControls(baseUnit) {
+    if (this._timecodeStatusEl) {
+      this._timecodeStatusEl.style.fontSize = `${Math.max(9, baseUnit * 0.18)}px`;
+    }
+    const resetBtn = this._clockPanel.querySelector('#bc-timecode-reset');
+    if (resetBtn) {
+      resetBtn.style.fontSize = `${Math.max(9, baseUnit * 0.16)}px`;
+      resetBtn.style.padding = `${baseUnit * 0.08}px ${baseUnit * 0.2}px`;
     }
   }
 
@@ -1498,6 +1787,7 @@ class BroadcastClockCard extends HTMLElement {
     if (this._timer) clearTimeout(this._timer);
     this._scheduleNextTick();
     this._syncSmoothSecondHand();
+    this._syncTimecodeRaf();
   }
 
   _scheduleNextTick() {
@@ -1523,6 +1813,9 @@ class BroadcastClockCard extends HTMLElement {
 
     if (this._clockType === 'master_clock') {
       this._tickAnalog(h24, m, s, dateStr);
+    } else if (this._clockType === 'timecode') {
+      // Driven by its own requestAnimationFrame loop (_syncTimecodeRaf),
+      // not this 1Hz tick -- frames need finer granularity than 1s.
     } else {
       this._tickTextStyle(h24, m, s, dateStr);
       if (this._clockType === 'led_ring') this._tickDotsRing(s);
@@ -1835,6 +2128,11 @@ class BroadcastClockCardEditor extends HTMLElement {
       text_color: '#ff3b3b',
       text_font: 'normal',
       segment_style: 'flat',
+      timecode_trigger: 'manual',
+      timecode_source_entity: '',
+      timecode_active_state: 'on',
+      timecode_idle_behavior: 'reset',
+      timecode_frame_rate: 25,
       show_seconds: true,
       seconds_placement: 'newline',
       time_format: '24h',
@@ -1924,7 +2222,14 @@ class BroadcastClockCardEditor extends HTMLElement {
     const isLedRing = c.clock_type === 'led_ring';
     const isText = c.clock_type === 'text';
     const isMasterClock = c.clock_type === 'master_clock';
-    const hasTextStyle = isLedRing || isText;
+    const isTimecode = c.clock_type === 'timecode';
+    // Font/segment_style are shared by all 3 non-analog types (timecode
+    // reuses the same digit rendering); show_seconds/seconds_placement/
+    // time_format are wall-clock-only concepts timecode doesn't have (it
+    // always shows HH:MM:SS:FF inline).
+    const hasFontChoice = isLedRing || isText || isTimecode;
+    const hasSecondsTimeFormat = isLedRing || isText;
+    const isTimecodeEntity = isTimecode && c.timecode_trigger === 'entity';
     // The panel that's hidden by the current layout has nothing to
     // configure -- no point showing clock options when only bars are
     // visible, or bar options when only the clock is visible.
@@ -1963,6 +2268,7 @@ class BroadcastClockCardEditor extends HTMLElement {
           <option value="master_clock" ${isMasterClock ? 'selected' : ''}>${this._t('option.clock_type_master_clock')}</option>
           <option value="led_ring" ${isLedRing ? 'selected' : ''}>${this._t('option.clock_type_led_ring')}</option>
           <option value="text" ${isText ? 'selected' : ''}>${this._t('option.clock_type_text')}</option>
+          <option value="timecode" ${isTimecode ? 'selected' : ''}>${this._t('option.clock_type_timecode')}</option>
         </select>
       </div>
       <div class="bce-row">
@@ -2052,7 +2358,7 @@ class BroadcastClockCardEditor extends HTMLElement {
       </div>
       ` : ''}
 
-      ${hasTextStyle ? `
+      ${hasFontChoice ? `
       <div class="bce-row">
         <label>${this._t('label.font')}</label>
         <select id="bce-textfont">
@@ -2069,6 +2375,44 @@ class BroadcastClockCardEditor extends HTMLElement {
         </select>
       </div>
       ` : ''}
+      ` : ''}
+
+      ${isTimecode ? `
+      <div class="bce-row">
+        <label>${this._t('label.timecode_trigger')}</label>
+        <select id="bce-timecodetrigger">
+          <option value="manual" ${c.timecode_trigger !== 'entity' ? 'selected' : ''}>${this._t('option.timecode_trigger_manual')}</option>
+          <option value="entity" ${c.timecode_trigger === 'entity' ? 'selected' : ''}>${this._t('option.timecode_trigger_entity')}</option>
+        </select>
+      </div>
+      ${isTimecodeEntity ? `
+      <div class="bce-row">
+        <label>${this._t('label.timecode_source_entity')}</label>
+        <ha-entity-picker id="bce-timecodeentity" allow-custom-entity></ha-entity-picker>
+      </div>
+      <div class="bce-row">
+        <label>${this._t('label.timecode_active_state')}</label>
+        <input type="text" id="bce-timecodeactivestate" placeholder="${this._t('placeholder.timecode_active_state')}" value="${c.timecode_active_state || 'on'}">
+      </div>
+      <div class="bce-row">
+        <label>${this._t('label.timecode_idle_behavior')}</label>
+        <select id="bce-timecodeidle">
+          <option value="reset" ${c.timecode_idle_behavior !== 'freeze' ? 'selected' : ''}>${this._t('option.timecode_idle_reset')}</option>
+          <option value="freeze" ${c.timecode_idle_behavior === 'freeze' ? 'selected' : ''}>${this._t('option.timecode_idle_freeze')}</option>
+        </select>
+      </div>
+      ` : ''}
+      <div class="bce-row">
+        <label>${this._t('label.timecode_frame_rate')}</label>
+        <select id="bce-timecodefps">
+          <option value="24" ${Number(c.timecode_frame_rate) === 24 ? 'selected' : ''}>${this._t('option.timecode_fps_24')}</option>
+          <option value="25" ${Number(c.timecode_frame_rate) !== 24 && Number(c.timecode_frame_rate) !== 30 ? 'selected' : ''}>${this._t('option.timecode_fps_25')}</option>
+          <option value="30" ${Number(c.timecode_frame_rate) === 30 ? 'selected' : ''}>${this._t('option.timecode_fps_30')}</option>
+        </select>
+      </div>
+      ` : ''}
+
+      ${hasSecondsTimeFormat ? `
       <div class="bce-row">
         <label>${this._t('label.show_seconds')}</label>
         <input type="checkbox" id="bce-showseconds" ${c.show_seconds !== false ? 'checked' : ''}>
@@ -2274,6 +2618,44 @@ class BroadcastClockCardEditor extends HTMLElement {
     if (segmentStyleSelect) {
       segmentStyleSelect.addEventListener('change', (e) => {
         this._config.segment_style = e.target.value;
+        this._emitChange();
+      });
+    }
+    const timecodeTriggerSelect = this._wrap.querySelector('#bce-timecodetrigger');
+    if (timecodeTriggerSelect) {
+      timecodeTriggerSelect.addEventListener('change', (e) => {
+        this._config.timecode_trigger = e.target.value;
+        this._render();
+        this._emitChange();
+      });
+    }
+    const timecodeEntityPicker = this._wrap.querySelector('#bce-timecodeentity');
+    if (timecodeEntityPicker) {
+      timecodeEntityPicker.hass = this._hass;
+      timecodeEntityPicker.value = c.timecode_source_entity || '';
+      timecodeEntityPicker.addEventListener('value-changed', (e) => {
+        this._config.timecode_source_entity = (e.detail.value || '').trim();
+        this._emitChange();
+      });
+    }
+    const timecodeActiveStateInput = this._wrap.querySelector('#bce-timecodeactivestate');
+    if (timecodeActiveStateInput) {
+      timecodeActiveStateInput.addEventListener('change', (e) => {
+        this._config.timecode_active_state = e.target.value.trim();
+        this._emitChange();
+      });
+    }
+    const timecodeIdleSelect = this._wrap.querySelector('#bce-timecodeidle');
+    if (timecodeIdleSelect) {
+      timecodeIdleSelect.addEventListener('change', (e) => {
+        this._config.timecode_idle_behavior = e.target.value;
+        this._emitChange();
+      });
+    }
+    const timecodeFpsSelect = this._wrap.querySelector('#bce-timecodefps');
+    if (timecodeFpsSelect) {
+      timecodeFpsSelect.addEventListener('change', (e) => {
+        this._config.timecode_frame_rate = Number(e.target.value);
         this._emitChange();
       });
     }
