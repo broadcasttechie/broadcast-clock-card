@@ -180,3 +180,15 @@ The visual editor follows your Home Assistant profile's language (`hass.language
 The date line follows `hass.language` automatically (via `Intl`/`toLocaleDateString`), no translation needed there. The spoken-time line ("Quarter past six") is built per-language via `SPOKEN_TIME_LOCALES`, since telling-time idiom is real sentence grammar, not a dictionary swap (English "half past six" vs German "halb sieben" — literally "half toward seven"). English is the only language implemented so far; a language with no entry falls back to English automatically. Adding a language means implementing its own `numberWord`/`spokenTime` pair, not translating strings — contributions from fluent speakers are especially welcome here, since getting the idiom right isn't something a dictionary lookup can verify.
 
 Use `language` (see [Top level](#top-level) options) to pin the card's own displayed language independently of the editor/your own HA profile — useful for a shared or wall-mounted display.
+
+## Author's note
+
+This, like most custom cards I guess, was written for a need I have, but so might you. (I couldn't find anything similar so here we are.)
+
+I feel it's only right to disclose that this card wouldn't exist without the help of AI, Claude in particular. I know that for many this will immediately turn people away and that's fine. No one is forcing you to use this and to be honest I'll be genuinely happy if even one other person does use this card. 
+
+I know that I could have created this card by hand (I have the skills I use every day); in a different time of my life I would have had the time.
+But for me this is a hobby. One for which I don't have any spare time at the moment.
+I welcome feedback and improvements (via issues/PRs). 
+
+
